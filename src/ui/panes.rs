@@ -473,6 +473,73 @@ pub(super) fn render_popup_pane(
     rt.render(frame, inner, !pane_is_scrolled_back(rt));
 }
 
+/// Resize the right-anchored region's terminal to its computed rectangle.
+///
+/// Resizes exactly one terminal and never triggers a session-wide pane sweep.
+/// A hidden region yields `None` for `outer`, so it does no resize work.
+pub(super) fn resize_region(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    outer: Option<Rect>,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) {
+    let Some(outer) = outer else {
+        return;
+    };
+    let Some(region) = app.regions.get(crate::region::RegionAnchor::Right) else {
+        return;
+    };
+    if app.direct_attach_resize_locks.contains(&region.terminal_id) {
+        return;
+    }
+    let inner = crate::region::region_inner_rect(outer);
+    if let Some(rt) = terminal_runtimes.get(&region.terminal_id) {
+        rt.resize(
+            inner.height,
+            inner.width,
+            cell_size.width_px,
+            cell_size.height_px,
+        );
+    }
+}
+
+/// Draw the right-anchored region. Reads state only; never mutates it.
+pub(super) fn render_region(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    frame: &mut Frame,
+) {
+    let Some(outer) = app.view.region_right_rect else {
+        return;
+    };
+    let Some(region) = app.regions.get(crate::region::RegionAnchor::Right) else {
+        return;
+    };
+    let Some(rt) = terminal_runtimes.get(&region.terminal_id) else {
+        return;
+    };
+    let focused = app.region_focus.as_deref() == Some(region.region_id.as_str());
+    let title = app
+        .terminals
+        .get(&region.terminal_id)
+        .and_then(|terminal| terminal.manual_label.as_deref())
+        .unwrap_or(region.title.as_str());
+    let border_color = if focused {
+        app.palette.accent
+    } else {
+        app.palette.surface1
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .title(pane_border_title(title, outer.width, focused).unwrap_or_default())
+        .style(Style::default().bg(app.palette.panel_bg));
+    let inner = crate::region::region_inner_rect(outer);
+    frame.render_widget(Clear, outer);
+    frame.render_widget(block, outer);
+    rt.render(frame, inner, focused && !pane_is_scrolled_back(rt));
+}
+
 #[derive(Clone, Copy, Default)]
 struct LineCell {
     up: bool,

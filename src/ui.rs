@@ -40,7 +40,9 @@ use self::navigator::render_navigator_overlay;
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
 use self::onboarding::render_onboarding_overlay;
 pub(crate) use self::panes::popup_pane_rects;
-use self::panes::{render_empty, render_popup_pane, resize_popup_pane};
+use self::panes::{
+    render_empty, render_popup_pane, render_region, resize_popup_pane, resize_region,
+};
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
     release_notes_display_lines, release_notes_wrapped_line_count, PRODUCT_ANNOUNCEMENT_MODAL_SIZE,
@@ -237,6 +239,13 @@ fn compute_view_internal(
     let [sidebar_area, main_area] =
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
 
+    // One keyed lookup and one subtraction per compute_view, never per pane or tab.
+    let region_layout = crate::region::layout_regions(
+        main_area,
+        app.regions.shown_size(crate::region::RegionAnchor::Right),
+    );
+    let main_area = region_layout.remaining;
+
     let (tab_bar_rect, terminal_area) = app
         .active
         .and_then(|i| app.workspaces.get(i))
@@ -289,6 +298,7 @@ fn compute_view_internal(
     if resize_panes {
         resize_background_tab_panes_for_desktop(app, terminal_runtimes, main_area, cell_size);
         resize_popup_pane(app, terminal_runtimes, terminal_area, cell_size);
+        resize_region(app, terminal_runtimes, region_layout.right, cell_size);
     }
 
     let toast_hit_area = app
@@ -314,6 +324,7 @@ fn compute_view_internal(
         tab_scroll_right_hit_area: tab_bar_view.scroll_right_hit_area,
         new_tab_hit_area: tab_bar_view.new_tab_hit_area,
         terminal_area,
+        region_right_rect: region_layout.right,
         mobile_header_rect: Rect::default(),
         mobile_menu_hit_area: Rect::default(),
         toast_hit_area,
@@ -377,6 +388,8 @@ fn compute_mobile_view(
         tab_scroll_right_hit_area: Rect::default(),
         new_tab_hit_area: Rect::default(),
         terminal_area,
+        // Mobile is single-column: regions are suppressed entirely.
+        region_right_rect: None,
         mobile_header_rect: header_rect,
         mobile_menu_hit_area: header_hits.menu,
         toast_hit_area,
@@ -414,6 +427,9 @@ pub fn render_with_runtime_registry(
     } else {
         render_empty(app, frame, terminal_area);
     }
+
+    // Regions occupy reserved frame area beside the tab surface, never over it.
+    render_region(app, terminal_runtimes, frame);
 
     // Ambient notifications sit above panes, but below interactive overlays.
     render_notifications(app, frame, terminal_area);
@@ -1028,6 +1044,139 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 100, 20));
 
         assert_eq!(app.view.sidebar_rect.width, 22);
+    }
+
+    fn app_with_right_region(size: u16, visible: bool) -> crate::app::state::AppState {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.regions
+            .insert(crate::region::RegionInstance::new(
+                crate::region::RegionId::alloc(),
+                "explorer".into(),
+                "sidebar".into(),
+                crate::terminal::TerminalId::alloc(),
+                crate::region::RegionAnchor::Right,
+                crate::region::RegionScope::Session,
+                "Explorer".into(),
+                size,
+                crate::region::RegionSizeBounds::new(Some(18), Some(60)),
+                visible,
+            ))
+            .expect("region claims the empty right slot");
+        app
+    }
+
+    #[test]
+    fn right_region_narrows_the_tab_surface_not_the_sidebar() {
+        let mut app = app_with_right_region(32, true);
+        app.sidebar_width = 26;
+
+        compute_view(&mut app, Rect::new(0, 0, 120, 20));
+
+        // Sidebar keeps its own columns; the region takes from the tab surface.
+        assert_eq!(app.view.sidebar_rect, Rect::new(0, 0, 26, 20));
+        assert_eq!(app.view.region_right_rect, Some(Rect::new(88, 0, 32, 20)));
+        assert_eq!(app.view.terminal_area, Rect::new(26, 1, 62, 19));
+    }
+
+    #[test]
+    fn tab_bar_does_not_run_under_the_right_region() {
+        let mut app = app_with_right_region(32, true);
+        app.sidebar_width = 26;
+
+        compute_view(&mut app, Rect::new(0, 0, 120, 20));
+
+        let region = app.view.region_right_rect.expect("region shown");
+        let tab_bar = app.view.tab_bar_rect;
+        assert_eq!(tab_bar.x + tab_bar.width, region.x);
+        assert_eq!(region.y, 0, "the region spans the full frame height");
+    }
+
+    #[test]
+    fn a_hidden_region_reserves_no_area() {
+        let mut app = app_with_right_region(32, false);
+        app.sidebar_width = 26;
+
+        compute_view(&mut app, Rect::new(0, 0, 120, 20));
+
+        assert_eq!(app.view.region_right_rect, None);
+        assert_eq!(app.view.terminal_area, Rect::new(26, 1, 94, 19));
+    }
+
+    #[test]
+    fn no_region_leaves_the_tab_surface_exactly_as_before() {
+        let mut baseline = crate::app::state::AppState::test_new();
+        baseline.workspaces = vec![Workspace::test_new("one")];
+        baseline.active = Some(0);
+        baseline.selected = 0;
+        baseline.mode = Mode::Terminal;
+        baseline.sidebar_width = 26;
+        compute_view(&mut baseline, Rect::new(0, 0, 120, 20));
+
+        let mut hidden = app_with_right_region(32, false);
+        hidden.sidebar_width = 26;
+        compute_view(&mut hidden, Rect::new(0, 0, 120, 20));
+
+        assert_eq!(hidden.view.terminal_area, baseline.view.terminal_area);
+        assert_eq!(hidden.view.tab_bar_rect, baseline.view.tab_bar_rect);
+        assert_eq!(baseline.view.region_right_rect, None);
+    }
+
+    #[test]
+    fn region_hides_on_a_narrow_frame_and_returns_when_it_regrows() {
+        let mut app = app_with_right_region(32, true);
+        app.sidebar_width = 26;
+
+        compute_view(&mut app, Rect::new(0, 0, 70, 20));
+        assert_eq!(app.view.region_right_rect, None);
+        let narrow_terminal_area = app.view.terminal_area;
+
+        compute_view(&mut app, Rect::new(0, 0, 120, 20));
+        assert!(app.view.region_right_rect.is_some());
+
+        // The region is still open; only this frame was too small for it.
+        compute_view(&mut app, Rect::new(0, 0, 70, 20));
+        assert_eq!(app.view.region_right_rect, None);
+        assert_eq!(app.view.terminal_area, narrow_terminal_area);
+        assert!(app
+            .regions
+            .get(crate::region::RegionAnchor::Right)
+            .is_some());
+    }
+
+    #[test]
+    fn mobile_layout_yields_no_regions() {
+        let mut app = app_with_right_region(32, true);
+
+        compute_view(&mut app, Rect::new(0, 0, 44, 20));
+
+        assert_eq!(app.view.layout, ViewLayout::Mobile);
+        assert_eq!(app.view.region_right_rect, None);
+        assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
+    }
+
+    #[test]
+    fn switching_tabs_never_touches_the_region_or_its_terminal() {
+        let mut app = app_with_right_region(32, true);
+        app.sidebar_width = 26;
+        let before = app
+            .regions
+            .get(crate::region::RegionAnchor::Right)
+            .expect("region open")
+            .clone();
+
+        app.workspaces[0].test_add_tab(Some("logs"));
+        compute_view(&mut app, Rect::new(0, 0, 120, 20));
+
+        let after = app
+            .regions
+            .get(crate::region::RegionAnchor::Right)
+            .expect("region survives a tab change");
+        assert_eq!(after.terminal_id, before.terminal_id);
+        assert_eq!(after, &before);
     }
 
     #[test]

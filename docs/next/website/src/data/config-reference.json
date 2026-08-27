@@ -1068,6 +1068,24 @@
           "description": "Expanded Space sidebar layout. Entries may be token strings or inline { token, fg, bold, dim } style tables. Supports built-in and $name metadata tokens; at most 16 rows and 16 tokens per row."
         },
         {
+          "key": "ui.regions.right.enabled",
+          "type": "boolean",
+          "default": "true",
+          "description": "Allow plugins to open a region anchored to the right edge of the desktop frame."
+        },
+        {
+          "key": "ui.regions.right.size",
+          "type": "integer",
+          "default": "32",
+          "description": "Width in columns of the right region. Overrides the plugin manifest and is clamped to the manifest min_size/max_size bounds."
+        },
+        {
+          "key": "ui.regions.right.start_hidden",
+          "type": "boolean",
+          "default": "false",
+          "description": "Open the right region hidden, so it reserves no screen area until it is shown."
+        },
+        {
           "key": "ui.accent",
           "type": "color",
           "default": "\"cyan\"",

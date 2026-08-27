@@ -877,6 +877,9 @@ pub struct ViewState {
     pub tab_scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
     pub terminal_area: Rect,
+    /// Screen area reserved for the right-anchored desktop region this frame.
+    /// `None` when no region is open, it is hidden, or the frame is too small.
+    pub region_right_rect: Option<Rect>,
     pub mobile_header_rect: Rect,
     pub mobile_menu_hit_area: Rect,
     pub toast_hit_area: Rect,
@@ -1534,6 +1537,9 @@ pub struct AppState {
     pub agent_view_override: Option<crate::api::schema::AgentViewSetParams>,
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
+    /// User configuration for desktop regions. Wins over the plugin manifest
+    /// for size and initial visibility; the manifest supplies the hard bounds.
+    pub regions_config: crate::config::RegionsConfig,
     pub next_agent_state_change_seq: u64,
     /// Capture mouse input for Herdr's own mouse UI. When false, Herdr only
     /// captures mouse while the focused pane app requests mouse reporting.
@@ -1607,6 +1613,14 @@ pub struct AppState {
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
     /// Session-modal terminal popup. This is intentionally outside workspace layouts.
     pub(crate) popup_pane: Option<PopupPaneState>,
+    /// Desktop regions — host-owned screen area outside any tab's pane tree.
+    /// Deliberately outside workspace layouts, so a tab switch never touches them.
+    pub(crate) regions: crate::region::RegionState,
+    /// Region that currently holds keyboard focus, if any.
+    ///
+    /// This is a peer of the sidebar, tab surface, and popup — not a pane
+    /// focus. Region focus is never reported as a focused pane.
+    pub(crate) region_focus: Option<String>,
     /// Recent plugin action/event command executions.
     pub(crate) plugin_command_logs: Vec<crate::api::schema::PluginCommandLogInfo>,
     pub(crate) next_plugin_command_log_id: u64,
@@ -1629,6 +1643,24 @@ pub struct AppState {
 impl AppState {
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
+    }
+
+    /// Capture desktop regions for the session snapshot.
+    ///
+    /// Persists slot metadata only: never the terminal contents or the child
+    /// process.
+    pub(crate) fn capture_region_snapshots(&self) -> Vec<crate::persist::RegionSnapshot> {
+        self.regions
+            .iter()
+            .map(|region| crate::persist::RegionSnapshot {
+                plugin_id: region.plugin_id.clone(),
+                entrypoint: region.entrypoint.clone(),
+                anchor: region.anchor,
+                scope: region.scope,
+                size: region.size(),
+                visible: region.visible,
+            })
+            .collect()
     }
 
     pub(crate) fn remove_alias_shadowed_by_new_pane(&mut self, pane_id: PaneId) {
@@ -1886,6 +1918,7 @@ impl AppState {
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
+                region_right_rect: None,
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -1928,6 +1961,7 @@ impl AppState {
             agent_view_override: None,
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
+            regions_config: crate::config::RegionsConfig::default(),
             next_agent_state_change_seq: 0,
             mouse_capture: true,
             copy_on_select: true,
@@ -1992,6 +2026,8 @@ impl AppState {
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             popup_pane: None,
+            regions: crate::region::RegionState::default(),
+            region_focus: None,
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
@@ -2020,6 +2056,19 @@ impl AppState {
                     }
                 }
             }
+        }
+    }
+
+    /// Region focus must always name a live region.
+    ///
+    /// A stale pointer would leave keyboard input addressed to a region that
+    /// no longer exists.
+    fn assert_region_focus_resolves(&self) {
+        if let Some(region_id) = &self.region_focus {
+            assert!(
+                self.regions.get_by_id(region_id).is_some(),
+                "region focus {region_id} does not name a live region"
+            );
         }
     }
 
@@ -2109,8 +2158,14 @@ impl AppState {
                 self.host_mouse_pixels.is_none(),
                 "empty app state must not keep host mouse pixel provenance"
             );
+            // Regions are deliberately not asserted empty here: like the popup,
+            // they are outside workspace layouts and survive an empty workspace
+            // list. Their focus pointer must still not dangle.
+            self.assert_region_focus_resolves();
             return;
         }
+
+        self.assert_region_focus_resolves();
 
         assert!(
             self.selected < self.workspaces.len(),
