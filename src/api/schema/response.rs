@@ -13,7 +13,7 @@ use super::panes::{
 };
 use super::plugins::{
     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
-    PluginPaneInfo,
+    PluginPaneInfo, RegionInfo,
 };
 use super::server::ServerCapabilities;
 use super::session::SessionSnapshot;
@@ -290,6 +290,21 @@ pub enum ResponseResult {
     },
     PluginPaneClosed {
         pane_id: String,
+    },
+    RegionOpened {
+        region: RegionInfo,
+    },
+    RegionClosed {
+        region_id: String,
+    },
+    RegionFocused {
+        region: RegionInfo,
+    },
+    RegionResized {
+        region: RegionInfo,
+    },
+    RegionList {
+        regions: Vec<RegionInfo>,
     },
     ConfigReload {
         status: crate::config::ConfigReloadStatus,

@@ -81,6 +81,10 @@ fn target_event_message(target: ClientInputTarget, event: ClientPaneInputEvent) 
             terminal_id,
             events: vec![event],
         },
+        ClientInputTarget::Region(terminal_id) => ClientMessage::ClientShellRegionInput {
+            terminal_id,
+            events: vec![event],
+        },
     }
 }
 
@@ -119,6 +123,22 @@ fn push_target_event(
             }
             outcome.requests.push(target_event_message(
                 ClientInputTarget::Popup(terminal_id),
+                event,
+            ));
+        }
+        ClientInputTarget::Region(terminal_id) => {
+            if let Some(ClientMessage::ClientShellRegionInput {
+                terminal_id: pending_terminal,
+                events,
+            }) = outcome.requests.last_mut()
+            {
+                if *pending_terminal == terminal_id {
+                    events.push(event);
+                    return;
+                }
+            }
+            outcome.requests.push(target_event_message(
+                ClientInputTarget::Region(terminal_id),
                 event,
             ));
         }

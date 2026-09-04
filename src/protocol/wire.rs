@@ -620,6 +620,14 @@ pub enum ClientMessage {
     /// This variant is append-only. Its bincode tag and two-string payload are part
     /// of endpoint generation 1 and must not change.
     EndpointControl { kind: String, data: String },
+
+    /// Deliver client-classified semantic input to the focused desktop region terminal.
+    ///
+    /// Appended after `EndpointControl` so every existing bincode tag is preserved.
+    ClientShellRegionInput {
+        terminal_id: String,
+        events: Vec<ClientPaneInputEvent>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1221,6 +1229,7 @@ pub struct PaneSurfaceFrame {
     pub panes: Vec<PaneSurfacePane>,
     pub splits: Vec<PaneSurfaceSplit>,
     pub popup: Option<Box<ClientShellPopupSurface>>,
+    pub region: Option<Box<ClientShellRegionSurface>>,
     pub graphics: SurfaceGraphicsScene,
 }
 
@@ -1259,6 +1268,27 @@ pub struct ClientShellPopupSurface {
     pub title: String,
     pub width: Option<ClientShellPopupSize>,
     pub height: Option<ClientShellPopupSize>,
+    pub frame: FrameData,
+    pub mouse_reporting: bool,
+    pub sgr_pixel_mouse: bool,
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+}
+
+/// One server-rendered right-anchored desktop region, composited by the client
+/// beside the tab surface. Mirrors the popup surface, plus reservation width and
+/// focus so the client can route keys locally in the hybrid focus model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientShellRegionSurface {
+    pub terminal_id: String,
+    /// Stable region identifier, used by the client to target region.focus/resize.
+    pub region_id: String,
+    pub title: String,
+    /// Reserved outer width in cells along the right edge, borders included.
+    pub size: u16,
+    /// Whether the region currently holds input focus; the client routes keys
+    /// to it locally while this is set.
+    pub focused: bool,
     pub frame: FrameData,
     pub mouse_reporting: bool,
     pub sgr_pixel_mouse: bool,
@@ -1976,6 +2006,13 @@ mod tests {
             }),
             20
         );
+        assert_eq!(
+            tag(&ClientMessage::ClientShellRegionInput {
+                terminal_id: "region".into(),
+                events: Vec::new(),
+            }),
+            21
+        );
     }
 
     #[test]
@@ -2398,6 +2435,7 @@ mod tests {
             panes: Vec::new(),
             splits: Vec::new(),
             popup: None,
+            region: None,
             graphics: SurfaceGraphicsScene::default(),
         });
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
@@ -2406,7 +2444,7 @@ mod tests {
         assert_eq!(msg, decoded);
         assert_eq!(
             encoded_sha256(&msg),
-            "7c016f7b21ddb5ac79212cf65a968b93eb292b5305b941263e89ffaa40158ee3"
+            "3b0136ffaeb7420c1a7be7a2a487e5499e26d1486b9daf6d4c06161993a238b1"
         );
         match decoded {
             ServerMessage::PaneSurface(surface) => {
@@ -2487,6 +2525,7 @@ mod tests {
             panes: Vec::new(),
             splits: Vec::new(),
             popup: None,
+            region: None,
             graphics: SurfaceGraphicsScene {
                 assets: vec![SurfaceGraphicsAsset {
                     key: key.clone(),
@@ -2514,7 +2553,7 @@ mod tests {
 
         assert_eq!(
             encoded_sha256(&message),
-            "49c4efec0f1456c8ca4112ddf6ead1ab75d0224007576c2ccc18c3fca55a69f0"
+            "e37dc1a2e75d4f97ad3593b75d30371f62721fb606028d56f1a34340056699e6"
         );
     }
 
@@ -2566,6 +2605,7 @@ mod tests {
             panes: Vec::new(),
             splits: Vec::new(),
             popup: None,
+            region: None,
             graphics: SurfaceGraphicsScene::default(),
         };
         assert_eq!(tag(&ServerMessage::PaneSurface(empty_frame())), 13);
@@ -2932,6 +2972,7 @@ mod tests {
             panes: Vec::new(),
             splits: Vec::new(),
             popup: None,
+            region: None,
             graphics: SurfaceGraphicsScene::default(),
         });
 

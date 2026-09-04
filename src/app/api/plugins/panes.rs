@@ -233,7 +233,9 @@ impl App {
         )
     }
 
-    fn plugin_pane_launch_env(
+    /// `pub(crate)` so regions reuse this exact projection, including its
+    /// protected-key filtering, rather than growing a parallel copy.
+    pub(crate) fn plugin_pane_launch_env(
         &self,
         plugin: &InstalledPluginInfo,
         entrypoint: &str,
@@ -326,7 +328,8 @@ impl App {
         )
     }
 
-    fn plugin_pane_cwd(
+    /// `pub(crate)` for the region lifecycle in `crate::app::region`.
+    pub(crate) fn plugin_pane_cwd(
         &self,
         plugin: &InstalledPluginInfo,
         override_cwd: Option<String>,

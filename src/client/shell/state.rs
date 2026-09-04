@@ -115,6 +115,7 @@ pub(super) struct ClientShellLayout {
     pub tab_bar: Rect,
     pub mobile_header: Rect,
     pub pane_surface: Rect,
+    pub region: Option<Rect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +138,7 @@ pub(super) struct ShellHitMap {
     pub(super) tabs: Vec<(Rect, String)>,
     pub(super) panes: Vec<PaneHit>,
     pub(super) popup: Option<PaneHit>,
+    pub(super) region: Option<PaneHit>,
     pub(super) pane_splits: Vec<PaneSplitHit>,
     pub(super) agents: Vec<(Rect, String)>,
     pub(super) agent_body: Rect,
@@ -230,6 +232,10 @@ pub(super) struct ClientTabPress {
 pub(super) enum ClientChromeDrag {
     SidebarWidth,
     SidebarSection,
+    /// Dragging the region's inner (left) edge to resize it via region.resize.
+    RegionEdge {
+        region_id: String,
+    },
     WorkspaceScrollbar {
         grab_row_offset: u16,
     },
@@ -755,6 +761,7 @@ pub(super) struct ClientVisibleNotification {
 pub(super) enum ClientInputTarget {
     Pane(String),
     Popup(String),
+    Region(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1156,13 +1163,37 @@ impl ClientShellState {
     }
 
     pub(super) fn layout(&self, cols: u16, rows: u16) -> ClientShellLayout {
-        self.config.layout(
+        let mut layout = self.config.layout(
             cols,
             rows,
             self.sidebar_collapsed,
             self.focused_tab_count(),
             self.sidebar_width,
-        )
+        );
+        // Reserve the right edge of the pane surface for a shown region so panes
+        // never render under it; the region strip keeps the pane surface height.
+        let region = layout
+            .mobile_header
+            .is_empty()
+            .then(|| {
+                self.pane_surface
+                    .as_ref()
+                    .and_then(|surface| surface.region.as_deref())
+            })
+            .flatten();
+        if let Some(region) = region {
+            let size = region.size.min(layout.pane_surface.width.saturating_sub(1));
+            if size > 0 {
+                layout.pane_surface.width -= size;
+                layout.region = Some(Rect::new(
+                    layout.pane_surface.x + layout.pane_surface.width,
+                    layout.pane_surface.y,
+                    size,
+                    layout.pane_surface.height,
+                ));
+            }
+        }
+        layout
     }
 
     pub(crate) fn surface_size(&self, cols: u16, rows: u16) -> ClientSurfaceSize {

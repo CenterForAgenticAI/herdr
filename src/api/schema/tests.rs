@@ -1020,6 +1020,7 @@ fn plugin_link_list_unlink_round_trip() {
             height: None,
             command: vec!["bun".into(), "run".into(), "board.ts".into()],
         }],
+        regions: Vec::new(),
         link_handlers: vec![PluginManifestLinkHandler {
             id: "github-pr".into(),
             title: "Open GitHub PR".into(),

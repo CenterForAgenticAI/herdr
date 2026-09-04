@@ -181,7 +181,10 @@ impl ClientShellState {
                         self.reconcile_input_source();
                         continue;
                     }
-                    if let Some(target) = self.popup_input_target() {
+                    if let Some(target) = self
+                        .popup_input_target()
+                        .or_else(|| self.region_input_target())
+                    {
                         super::push_target_event(
                             target,
                             ClientPaneInputEvent::TextCommit(text),
@@ -214,7 +217,10 @@ impl ClientShellState {
                         self.reconcile_input_source();
                         continue;
                     }
-                    if let Some(target) = self.popup_input_target() {
+                    if let Some(target) = self
+                        .popup_input_target()
+                        .or_else(|| self.region_input_target())
+                    {
                         super::push_target_event(
                             target,
                             ClientPaneInputEvent::Paste(text),
@@ -499,6 +505,22 @@ impl ClientShellState {
         }
         if let Some(target) = self.popup_input_target() {
             return Some(target);
+        }
+        if let Some(target) = self.region_input_target() {
+            if !crate::config::terminal_key_matches_combo(key, self.config.keybinds.prefix) {
+                return Some(target);
+            }
+            // Prefix while the region is focused drops region focus: focusing the
+            // current pane clears region_focus server-side, and the key falls
+            // through to normal shell handling below.
+            if let Some(pane_id) = self.focused_pane_id() {
+                self.push_endpoint_method(
+                    crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                        pane_id,
+                    }),
+                    outcome,
+                );
+            }
         }
         if self.popup_pending {
             return None;
@@ -955,6 +977,7 @@ impl ClientShellState {
             popup_terminal_id: self.popup_input_target().and_then(|target| match target {
                 ClientInputTarget::Popup(terminal_id) => Some(terminal_id),
                 ClientInputTarget::Pane(_) => None,
+                ClientInputTarget::Region(_) => None,
             }),
             popup_pending: self.popup_pending,
             retained_selection: self
@@ -990,6 +1013,7 @@ impl ClientShellState {
         if let Some(terminal_id) = self.popup_input_target().and_then(|target| match target {
             ClientInputTarget::Popup(terminal_id) => Some(terminal_id),
             ClientInputTarget::Pane(_) => None,
+            ClientInputTarget::Region(_) => None,
         }) {
             return Some(crate::protocol::ClientClipboardImageTarget::Popup(
                 terminal_id,
@@ -1006,6 +1030,14 @@ impl ClientShellState {
         self.popup_terminal_id
             .as_ref()
             .map(|terminal_id| ClientInputTarget::Popup(terminal_id.clone()))
+    }
+
+    fn region_input_target(&self) -> Option<ClientInputTarget> {
+        self.pane_surface
+            .as_ref()
+            .and_then(|surface| surface.region.as_deref())
+            .filter(|region| region.focused)
+            .map(|region| ClientInputTarget::Region(region.terminal_id.clone()))
     }
 
     fn push_pane_key(

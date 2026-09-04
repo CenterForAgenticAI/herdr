@@ -58,6 +58,8 @@ pub struct InstalledPluginInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub panes: Vec<PluginManifestPane>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<PluginManifestRegion>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_handlers: Vec<PluginManifestLinkHandler>,
     #[serde(default)]
     pub source: PluginSourceInfo,
@@ -278,6 +280,36 @@ pub struct PluginManifestPane {
     pub command: Vec<String>,
 }
 
+/// A region declared by a plugin manifest's `[[regions]]` section.
+///
+/// Deliberately separate from [`PluginManifestPane`]: a region has no popup
+/// width/height, no split direction, and no target pane, so reusing the pane
+/// type would make an invalid combination expressible and push rejection to
+/// runtime. Here the invalid combination is unrepresentable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginManifestRegion {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<PluginPlatform>>,
+    #[serde(default)]
+    pub anchor: crate::region::RegionAnchor,
+    #[serde(default)]
+    pub scope: crate::region::RegionScope,
+    /// Preferred size in cells along the anchored axis. User config wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u16>,
+    /// Hard lower bound the server clamps every size request into.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<u16>,
+    /// Hard upper bound the server clamps every size request into.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u16>,
+    pub command: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PluginManifestLinkHandler {
     pub id: String,
@@ -466,4 +498,54 @@ pub struct PluginPaneInfo {
     pub plugin_id: String,
     pub entrypoint: String,
     pub pane: PaneInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RegionOpenParams {
+    pub plugin_id: String,
+    pub entrypoint: String,
+    /// Size in cells along the anchored axis. Clamped server-side into the
+    /// manifest's min_size/max_size, so a caller cannot widen its own limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub focus: bool,
+    /// Caller-supplied environment. Herdr-owned keys are stripped before the
+    /// child environment is built; they cannot be overridden.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RegionTarget {
+    pub region_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RegionResizeParams {
+    pub region_id: String,
+    /// Requested size in cells; clamped into the region's server-owned bounds.
+    pub size: u16,
+}
+
+/// One live region, as reported by `region.list`.
+///
+/// A region has a region_id and no pane_id: it does not appear in pane.list,
+/// pane.layout, or layout.export, which is what keeps it out of every
+/// tab-bound code path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RegionInfo {
+    pub region_id: String,
+    pub plugin_id: String,
+    pub entrypoint: String,
+    pub title: String,
+    pub anchor: crate::region::RegionAnchor,
+    pub scope: crate::region::RegionScope,
+    pub size: u16,
+    pub min_size: u16,
+    pub max_size: u16,
+    pub visible: bool,
+    pub focused: bool,
 }

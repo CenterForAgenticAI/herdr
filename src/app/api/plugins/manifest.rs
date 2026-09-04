@@ -1,7 +1,7 @@
 use crate::api::schema::{
     InstalledPluginInfo, PluginManifestAction, PluginManifestBuild, PluginManifestEventHook,
-    PluginManifestLinkHandler, PluginManifestPane, PluginManifestStartup, PluginPanePlacement,
-    PluginPlatform, PluginSourceInfo, PluginSourceKind,
+    PluginManifestLinkHandler, PluginManifestPane, PluginManifestRegion, PluginManifestStartup,
+    PluginPanePlacement, PluginPlatform, PluginSourceInfo, PluginSourceKind,
 };
 use crate::popup_size::PopupSize;
 
@@ -29,6 +29,8 @@ struct RawPluginManifest {
     events: Vec<RawPluginManifestEventHook>,
     #[serde(default)]
     panes: Vec<RawPluginManifestPane>,
+    #[serde(default)]
+    regions: Vec<RawPluginManifestRegion>,
     #[serde(default)]
     link_handlers: Vec<RawPluginManifestLinkHandler>,
 }
@@ -83,6 +85,74 @@ struct RawPluginManifestPane {
     #[serde(default)]
     height: Option<PopupSize>,
     command: Vec<String>,
+}
+
+/// A `[[regions]]` entry. Note the absent width/height/direction/target_pane_id:
+/// unlike a pane, a region cannot express them at all.
+#[derive(serde::Deserialize)]
+struct RawPluginManifestRegion {
+    id: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    platforms: Option<Vec<RawPlatform>>,
+    #[serde(default)]
+    anchor: RawRegionAnchor,
+    #[serde(default)]
+    scope: RawRegionScope,
+    #[serde(default)]
+    size: Option<u16>,
+    #[serde(default)]
+    min_size: Option<u16>,
+    #[serde(default)]
+    max_size: Option<u16>,
+    command: Vec<String>,
+}
+
+/// Raw string anchor from the manifest, validated before conversion.
+///
+/// Phase 1 accepts `right` only. An unsupported edge is a manifest error, not a
+/// silent fallback, so a plugin author sees why the region did not appear.
+#[derive(Default)]
+struct RawRegionAnchor(crate::region::RegionAnchor);
+
+impl<'de> serde::Deserialize<'de> for RawRegionAnchor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "right" => Ok(Self(crate::region::RegionAnchor::Right)),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid_plugin_region_anchor: unsupported anchor '{other}'; \
+                 this Herdr supports 'right'"
+            ))),
+        }
+    }
+}
+
+/// Raw string scope from the manifest, validated before conversion.
+///
+/// Phase 1 accepts `session` only.
+#[derive(Default)]
+struct RawRegionScope(crate::region::RegionScope);
+
+impl<'de> serde::Deserialize<'de> for RawRegionScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "session" => Ok(Self(crate::region::RegionScope::Session)),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid_plugin_region_scope: unsupported scope '{other}'; \
+                 this Herdr supports 'session'"
+            ))),
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -192,6 +262,14 @@ pub(crate) fn load_plugin_manifest(
         .collect::<Result<Vec<_>, _>>()?;
     reject_duplicate_pane_ids(&panes)?;
     panes.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut regions = raw
+        .regions
+        .into_iter()
+        .map(normalize_manifest_region)
+        .collect::<Result<Vec<_>, _>>()?;
+    reject_duplicate_region_ids(&regions)?;
+    reject_conflicting_region_slots(&regions)?;
+    regions.sort_by(|a, b| a.id.cmp(&b.id));
     let link_handlers = raw
         .link_handlers
         .into_iter()
@@ -220,6 +298,7 @@ pub(crate) fn load_plugin_manifest(
         actions,
         events,
         panes,
+        regions,
         link_handlers,
         source: Default::default(),
         warnings,
@@ -347,6 +426,43 @@ fn reject_duplicate_pane_ids(panes: &[PluginManifestPane]) -> Result<(), (&'stat
     Ok(())
 }
 
+fn reject_duplicate_region_ids(
+    regions: &[PluginManifestRegion],
+) -> Result<(), (&'static str, String)> {
+    let mut seen = std::collections::HashSet::new();
+    for region in regions {
+        if !seen.insert(region.id.as_str()) {
+            return Err((
+                "duplicate_plugin_region_id",
+                format!("duplicate region id '{}'", region.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reject two regions competing for the same slot inside one manifest.
+///
+/// The slot invariant is enforced again at open time, but catching it here
+/// tells the plugin author at link time instead of on a failed open.
+fn reject_conflicting_region_slots(
+    regions: &[PluginManifestRegion],
+) -> Result<(), (&'static str, String)> {
+    let mut seen = std::collections::HashSet::new();
+    for region in regions {
+        if !seen.insert((region.anchor, region.scope)) {
+            return Err((
+                "conflicting_plugin_region_slot",
+                format!(
+                    "region '{}' declares an anchor and scope already claimed by another region",
+                    region.id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn reject_duplicate_link_handler_ids(
     handlers: &[PluginManifestLinkHandler],
 ) -> Result<(), (&'static str, String)> {
@@ -442,6 +558,45 @@ fn normalize_manifest_pane(
     })
 }
 
+/// Normalize a `[[regions]]` entry.
+///
+/// There is no width/height check here, unlike `normalize_manifest_pane`: a
+/// region cannot express those fields, so the invalid combination the pane
+/// normalizer must reject at runtime does not exist in this type.
+///
+/// `size`, `min_size`, and `max_size` are clamped server-side by
+/// [`crate::region::RegionSizeBounds`], so a manifest cannot widen its own
+/// limits or zero a region.
+fn normalize_manifest_region(
+    region: RawPluginManifestRegion,
+) -> Result<PluginManifestRegion, (&'static str, String)> {
+    let id = normalize_action_id(&region.id)
+        .ok_or_else(|| ("invalid_plugin_region_id", "invalid region id".to_string()))?;
+    let title = non_empty_trimmed(
+        &region.title,
+        "invalid_plugin_region_title",
+        "region title is required",
+    )?;
+    let description = region
+        .description
+        .map(|description| description.trim().to_string())
+        .filter(|description| !description.is_empty());
+    let platforms = normalize_platforms(region.platforms)?;
+    let command = normalize_command(region.command)?;
+    Ok(PluginManifestRegion {
+        id,
+        title,
+        description,
+        platforms,
+        anchor: region.anchor.0,
+        scope: region.scope.0,
+        size: region.size,
+        min_size: region.min_size,
+        max_size: region.max_size,
+        command,
+    })
+}
+
 fn normalize_manifest_event(
     event: RawPluginManifestEventHook,
 ) -> Result<PluginManifestEventHook, (&'static str, String)> {
@@ -520,7 +675,7 @@ fn current_platform() -> PluginPlatform {
 /// Resolve the effective platforms for an action or event: use the item's own
 /// platforms if declared, otherwise inherit from the plugin-level platforms.
 /// Returns a reference to whichever `Option<Vec<PluginPlatform>>` applies.
-pub(super) fn effective_platforms<'a>(
+pub(in crate::app::api) fn effective_platforms<'a>(
     item_platforms: &'a Option<Vec<PluginPlatform>>,
     plugin_platforms: &'a Option<Vec<PluginPlatform>>,
 ) -> &'a Option<Vec<PluginPlatform>> {
@@ -531,7 +686,7 @@ pub(super) fn effective_platforms<'a>(
     }
 }
 
-pub(super) fn ensure_platform_supported(
+pub(in crate::app::api) fn ensure_platform_supported(
     platforms: &Option<Vec<PluginPlatform>>,
     subject: &str,
 ) -> Result<(), (&'static str, String)> {
@@ -585,7 +740,7 @@ pub(crate) fn normalize_plugin_id(value: &str) -> Option<String> {
     normalize_identifier(value, PLUGIN_ID_MAX_CHARS)
 }
 
-pub(super) fn normalize_action_id(value: &str) -> Option<String> {
+pub(in crate::app::api) fn normalize_action_id(value: &str) -> Option<String> {
     normalize_local_identifier(value, PLUGIN_ACTION_ID_MAX_CHARS)
 }
 

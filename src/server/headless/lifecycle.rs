@@ -85,6 +85,7 @@ impl HeadlessServer {
             &self.app.terminal_runtimes,
             self.app.state.active,
             self.app.state.selected,
+            self.app.state.capture_region_snapshots(),
         );
 
         let mut handoff_entries = Vec::new();

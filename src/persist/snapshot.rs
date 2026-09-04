@@ -9,7 +9,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
-pub(super) const SNAPSHOT_VERSION: u32 = 3;
+pub(super) const SNAPSHOT_VERSION: u32 = 4;
 
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
@@ -26,6 +26,27 @@ pub struct SessionSnapshot {
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    /// Desktop regions. Added in version 4; a version-3 file simply has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<RegionSnapshot>,
+}
+
+/// One persisted desktop region.
+///
+/// Declarative slot metadata only. The terminal contents and the child process
+/// are deliberately not persisted; the program is respawned like a restored
+/// pane shell, with no attempt to restore its internal state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegionSnapshot {
+    pub plugin_id: String,
+    pub entrypoint: String,
+    #[serde(default)]
+    pub anchor: crate::region::RegionAnchor,
+    #[serde(default)]
+    pub scope: crate::region::RegionScope,
+    pub size: u16,
+    #[serde(default)]
+    pub visible: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -184,6 +205,8 @@ struct RawSessionSnapshot {
     sidebar_section_split: Option<f32>,
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
+    #[serde(default)]
+    regions: Vec<RegionSnapshot>,
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
@@ -199,6 +222,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
+        regions: raw.regions,
     })
 }
 
@@ -258,6 +282,7 @@ pub fn capture(
     terminal_runtimes: &TerminalRuntimeRegistry,
     active: Option<usize>,
     selected: usize,
+    regions: Vec<RegionSnapshot>,
 ) -> SessionSnapshot {
     SessionSnapshot {
         version: SNAPSHOT_VERSION,
@@ -270,6 +295,7 @@ pub fn capture(
         sidebar_width: None,
         sidebar_section_split: None,
         collapsed_space_keys: std::collections::HashSet::new(),
+        regions,
     }
 }
 
@@ -535,6 +561,7 @@ mod tests {
             terminal_runtimes,
             state.active,
             state.selected,
+            state.capture_region_snapshots(),
         )
     }
 
@@ -599,6 +626,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            regions: Vec::new(),
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
@@ -606,6 +634,121 @@ mod tests {
         assert_eq!(restored.active, None);
         assert_eq!(restored.sidebar_width, Some(26));
         assert_eq!(restored.sidebar_section_split, Some(0.5));
+    }
+
+    #[test]
+    fn version_3_snapshot_loads_without_regions() {
+        // A v3 file predates the field entirely; it must still load.
+        let json = serde_json::json!({
+            "version": 3,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+        })
+        .to_string();
+
+        let restored = parse_snapshot(&json).expect("v3 snapshot still loads");
+
+        assert_eq!(restored.version, 3);
+        assert!(restored.regions.is_empty());
+    }
+
+    #[test]
+    fn committed_v3_fixtures_still_load_without_regions() {
+        for name in ["current-herdr", "current-herdr-dev", "legacy-pre-tabs-v2"] {
+            let restored =
+                parse_snapshot(session_fixture(name)).unwrap_or_else(|err| panic!("{name}: {err}"));
+
+            assert!(restored.regions.is_empty(), "{name} must have no regions");
+        }
+    }
+
+    #[test]
+    fn version_4_round_trips_regions() {
+        let snap = SessionSnapshot {
+            version: SNAPSHOT_VERSION,
+            workspaces: vec![],
+            active: None,
+            selected: 0,
+            sidebar_width: Some(26),
+            sidebar_section_split: Some(0.5),
+            collapsed_space_keys: std::collections::HashSet::new(),
+            regions: vec![RegionSnapshot {
+                plugin_id: "explorer".into(),
+                entrypoint: "sidebar".into(),
+                anchor: crate::region::RegionAnchor::Right,
+                scope: crate::region::RegionScope::Session,
+                size: 32,
+                visible: true,
+            }],
+        };
+
+        let json = serde_json::to_string(&snap).unwrap();
+        let restored = parse_snapshot(&json).unwrap();
+
+        assert_eq!(SNAPSHOT_VERSION, 4);
+        assert_eq!(restored.regions, snap.regions);
+    }
+
+    #[test]
+    fn a_snapshot_without_regions_omits_the_field_entirely() {
+        let snap = SessionSnapshot {
+            version: SNAPSHOT_VERSION,
+            workspaces: vec![],
+            active: None,
+            selected: 0,
+            sidebar_width: Some(26),
+            sidebar_section_split: Some(0.5),
+            collapsed_space_keys: std::collections::HashSet::new(),
+            regions: Vec::new(),
+        };
+
+        let json = serde_json::to_value(&snap).unwrap();
+
+        assert!(json.get("regions").is_none());
+    }
+
+    #[test]
+    fn a_snapshot_never_persists_terminal_or_process_state() {
+        let snap = SessionSnapshot {
+            version: SNAPSHOT_VERSION,
+            workspaces: vec![],
+            active: None,
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: std::collections::HashSet::new(),
+            regions: vec![RegionSnapshot {
+                plugin_id: "explorer".into(),
+                entrypoint: "sidebar".into(),
+                anchor: crate::region::RegionAnchor::Right,
+                scope: crate::region::RegionScope::Session,
+                size: 32,
+                visible: true,
+            }],
+        };
+
+        let region = &serde_json::to_value(&snap).unwrap()["regions"][0];
+
+        // serde_json orders object keys lexically, so compare the set.
+        let keys: std::collections::BTreeSet<&str> = region
+            .as_object()
+            .expect("region object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([
+                "plugin_id",
+                "entrypoint",
+                "anchor",
+                "scope",
+                "size",
+                "visible",
+            ]),
+            "a region must persist slot metadata only"
+        );
     }
 
     #[test]
@@ -686,6 +829,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            regions: Vec::new(),
             version: SNAPSHOT_VERSION,
         };
 
@@ -1253,6 +1397,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            regions: Vec::new(),
         };
 
         let json = serde_json::to_string(&snap).unwrap();

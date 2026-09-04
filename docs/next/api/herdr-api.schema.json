@@ -3911,6 +3911,78 @@
           ],
           "type": "string"
         },
+        "RegionOpenParams": {
+          "properties": {
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "entrypoint": {
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Caller-supplied environment. Herdr-owned keys are stripped before the\nchild environment is built; they cannot be overridden.",
+              "type": "object"
+            },
+            "focus": {
+              "default": false,
+              "type": "boolean"
+            },
+            "plugin_id": {
+              "type": "string"
+            },
+            "size": {
+              "description": "Size in cells along the anchored axis. Clamped server-side into the\nmanifest's min_size/max_size, so a caller cannot widen its own limits.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "plugin_id",
+            "entrypoint"
+          ],
+          "type": "object"
+        },
+        "RegionResizeParams": {
+          "properties": {
+            "region_id": {
+              "type": "string"
+            },
+            "size": {
+              "description": "Requested size in cells; clamped into the region's server-owned bounds.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "region_id",
+            "size"
+          ],
+          "type": "object"
+        },
+        "RegionTarget": {
+          "properties": {
+            "region_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "region_id"
+          ],
+          "type": "object"
+        },
         "ReleaseNotesDismissParams": {
           "properties": {
             "version": {
@@ -6350,6 +6422,86 @@
             "params"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "region.open",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RegionOpenParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "region.close",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RegionTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "region.focus",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RegionTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "region.resize",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RegionResizeParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "region.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -7579,6 +7731,12 @@
             },
             "plugin_root": {
               "type": "string"
+            },
+            "regions": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PluginManifestRegion"
+              },
+              "type": "array"
             },
             "source": {
               "$ref": "#/schemas/success_response/$defs/PluginSourceInfo",
@@ -9008,6 +9166,82 @@
           ],
           "type": "object"
         },
+        "PluginManifestRegion": {
+          "description": "A region declared by a plugin manifest's `[[regions]]` section.\n\nDeliberately separate from [`PluginManifestPane`]: a region has no popup\nwidth/height, no split direction, and no target pane, so reusing the pane\ntype would make an invalid combination expressible and push rejection to\nruntime. Here the invalid combination is unrepresentable.",
+          "properties": {
+            "anchor": {
+              "$ref": "#/schemas/success_response/$defs/RegionAnchor",
+              "default": "right"
+            },
+            "command": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "description": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "max_size": {
+              "description": "Hard upper bound the server clamps every size request into.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "min_size": {
+              "description": "Hard lower bound the server clamps every size request into.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "platforms": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PluginPlatform"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "scope": {
+              "$ref": "#/schemas/success_response/$defs/RegionScope",
+              "default": "session"
+            },
+            "size": {
+              "description": "Preferred size in cells along the anchored axis. User config wins.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "command"
+          ],
+          "type": "object"
+        },
         "PluginManifestStartup": {
           "properties": {
             "command": {
@@ -9156,6 +9390,81 @@
             "recent",
             "recent_unwrapped",
             "detection"
+          ],
+          "type": "string"
+        },
+        "RegionAnchor": {
+          "description": "Which frame edge a region occupies.\n\nPhase 1 ships `right` only. The type exists so other edges are a variant\naway rather than a redesign.",
+          "enum": [
+            "right"
+          ],
+          "type": "string"
+        },
+        "RegionInfo": {
+          "description": "One live region, as reported by `region.list`.\n\nA region has a region_id and no pane_id: it does not appear in pane.list,\npane.layout, or layout.export, which is what keeps it out of every\ntab-bound code path.",
+          "properties": {
+            "anchor": {
+              "$ref": "#/schemas/success_response/$defs/RegionAnchor"
+            },
+            "entrypoint": {
+              "type": "string"
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "max_size": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_size": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "plugin_id": {
+              "type": "string"
+            },
+            "region_id": {
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/schemas/success_response/$defs/RegionScope"
+            },
+            "size": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "visible": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "region_id",
+            "plugin_id",
+            "entrypoint",
+            "title",
+            "anchor",
+            "scope",
+            "size",
+            "min_size",
+            "max_size",
+            "visible",
+            "focused"
+          ],
+          "type": "object"
+        },
+        "RegionScope": {
+          "description": "What a region's lifetime is bound to.\n\nPhase 1 ships `session` only: one instance for the whole session, shared by\nevery Space and tab.",
+          "enum": [
+            "session"
           ],
           "type": "string"
         },
@@ -10432,6 +10741,89 @@
               "required": [
                 "type",
                 "pane_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "region": {
+                  "$ref": "#/schemas/success_response/$defs/RegionInfo"
+                },
+                "type": {
+                  "const": "region_opened",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "region"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "region_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "region_closed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "region_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "region": {
+                  "$ref": "#/schemas/success_response/$defs/RegionInfo"
+                },
+                "type": {
+                  "const": "region_focused",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "region"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "region": {
+                  "$ref": "#/schemas/success_response/$defs/RegionInfo"
+                },
+                "type": {
+                  "const": "region_resized",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "region"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "regions": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/RegionInfo"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "region_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "regions"
               ],
               "type": "object"
             },

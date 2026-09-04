@@ -105,6 +105,7 @@ impl RenderPipeline {
             panes: rendered.panes,
             splits: rendered.splits,
             popup: rendered.popup,
+            region: rendered.region,
             graphics: rendered.graphics,
         });
         black_box(

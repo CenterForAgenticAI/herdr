@@ -262,6 +262,16 @@ pub enum Method {
     PluginPaneFocus(PluginPaneFocusParams),
     #[serde(rename = "plugin.pane.close")]
     PluginPaneClose(PluginPaneCloseParams),
+    #[serde(rename = "region.open")]
+    RegionOpen(RegionOpenParams),
+    #[serde(rename = "region.close")]
+    RegionClose(RegionTarget),
+    #[serde(rename = "region.focus")]
+    RegionFocus(RegionTarget),
+    #[serde(rename = "region.resize")]
+    RegionResize(RegionResizeParams),
+    #[serde(rename = "region.list")]
+    RegionList(EmptyParams),
 }
 
 #[cfg(test)]

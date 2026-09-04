@@ -319,6 +319,13 @@ impl TerminalRuntime {
         self.0.bracketed_paste_enabled()
     }
 
+    /// Exit code of the child process, once it has exited normally.
+    ///
+    /// `None` while it runs, or when it was killed by a signal.
+    pub fn child_exit_code(&self) -> Option<i32> {
+        self.0.child_exit_code()
+    }
+
     pub fn mouse_reporting_enabled(&self) -> bool {
         self.0.mouse_reporting_enabled()
     }

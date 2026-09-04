@@ -248,6 +248,7 @@ pub(super) struct RenderedPaneSurface {
     pub(super) panes: Vec<protocol::PaneSurfacePane>,
     pub(super) splits: Vec<protocol::PaneSurfaceSplit>,
     pub(super) popup: Option<Box<protocol::ClientShellPopupSurface>>,
+    pub(super) region: Option<Box<protocol::ClientShellRegionSurface>>,
     pub(super) graphics: protocol::SurfaceGraphicsScene,
     pub(super) graphics_delivery: crate::kitty_graphics::surface::DeliveryCache,
 }
@@ -388,6 +389,7 @@ pub(super) fn render_pane_surface(
     let popup = show_popup
         .then(|| render_popup_surface(app, area, resize_panes, cell_size))
         .flatten();
+    let region = render_region_surface(app, area, resize_panes, cell_size);
     let (graphics, next_graphics_delivery) = crate::server::client_shell_graphics::collect(
         app,
         &layout.pane_infos,
@@ -403,6 +405,7 @@ pub(super) fn render_pane_surface(
         panes,
         splits,
         popup,
+        region,
         graphics,
         graphics_delivery: next_graphics_delivery,
     }
@@ -444,6 +447,75 @@ fn render_popup_surface(
         title,
         width: popup.width.map(client_popup_size),
         height: popup.height.map(client_popup_size),
+        frame: FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, cursor, &hyperlinks),
+        mouse_reporting: runtime.mouse_reporting_enabled(),
+        sgr_pixel_mouse: runtime.sgr_pixel_mouse_enabled(),
+        pixel_width,
+        pixel_height,
+    }))
+}
+
+/// Project the right-anchored region as a surface for the client to composite.
+///
+/// The region sits beside the pane surface at the same height; `area` is the
+/// client's pane-surface size, so the region's inner content is sized to
+/// `size - borders` by `area.height - borders`. Reads state; resizes at most one
+/// terminal when `resize_runtime` is set.
+fn render_region_surface(
+    app: &app::App,
+    area: Rect,
+    resize_runtime: bool,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) -> Option<Box<protocol::ClientShellRegionSurface>> {
+    let region = app.state.regions.get(crate::region::RegionAnchor::Right)?;
+    let size = app
+        .state
+        .regions
+        .shown_size(crate::region::RegionAnchor::Right)?;
+    let outer = Rect::new(0, 0, size, area.height);
+    let inner = crate::region::region_inner_rect(outer);
+    if inner.width == 0 || inner.height == 0 {
+        return None;
+    }
+    let runtime = app.terminal_runtimes.get(&region.terminal_id)?;
+    if resize_runtime
+        && !app
+            .state
+            .direct_attach_resize_locks
+            .contains(&region.terminal_id)
+    {
+        runtime.resize(
+            inner.height,
+            inner.width,
+            cell_size.width_px,
+            cell_size.height_px,
+        );
+    }
+    let content_area = Rect::new(0, 0, inner.width, inner.height);
+    let (buffer, cursor) =
+        crate::server::render_stream::render_terminal_virtual(runtime, content_area);
+    let hyperlinks = runtime.visible_hyperlinks(content_area);
+    let title = app
+        .state
+        .terminals
+        .get(&region.terminal_id)
+        .and_then(|terminal| terminal.manual_label.clone())
+        .unwrap_or_else(|| region.title.clone());
+    let focused = app.state.region_focus.as_deref() == Some(region.region_id.as_str());
+    let (pixel_width, pixel_height) = if cell_size.is_known() {
+        (
+            u32::from(content_area.width) * cell_size.width_px,
+            u32::from(content_area.height) * cell_size.height_px,
+        )
+    } else {
+        (0, 0)
+    };
+    Some(Box::new(protocol::ClientShellRegionSurface {
+        terminal_id: region.terminal_id.to_string(),
+        region_id: region.region_id.to_string(),
+        title,
+        size,
+        focused,
         frame: FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, cursor, &hyperlinks),
         mouse_reporting: runtime.mouse_reporting_enabled(),
         sgr_pixel_mouse: runtime.sgr_pixel_mouse_enabled(),

@@ -14,6 +14,11 @@ use crate::api::schema::{
 };
 use crate::app::App;
 pub(super) use manifest::normalize_plugin_id;
+pub(in crate::app::api) use manifest::{
+    effective_platforms as plugin_effective_platforms,
+    ensure_platform_supported as plugin_ensure_platform_supported,
+    normalize_action_id as plugin_normalize_action_id,
+};
 use manifest::{
     effective_platforms, ensure_platform_supported, normalize_action_id, normalize_plugin_source,
 };
@@ -36,7 +41,7 @@ impl App {
             .collect();
     }
 
-    fn refresh_installed_plugins(&mut self) -> std::io::Result<()> {
+    pub(in crate::app::api) fn refresh_installed_plugins(&mut self) -> std::io::Result<()> {
         if !self.policy.persist_plugin_registry {
             return Ok(());
         }
@@ -130,6 +135,9 @@ impl App {
             self.state
                 .plugin_panes
                 .retain(|_, record| record.plugin_id != plugin_id);
+            // Regions do close: unlike a pane, a region is host-owned screen
+            // area supplied by the plugin, so it cannot outlive its provider.
+            self.close_regions_for_plugin(&plugin_id);
             self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
         }
         encode_success(id, ResponseResult::PluginUnlinked { plugin_id, removed })
@@ -700,6 +708,10 @@ impl App {
         if !found {
             return encode_error(id, "plugin_not_found", "plugin not found");
         }
+        if !enabled {
+            // A disabled plugin's regions close; its panes keep running.
+            self.close_regions_for_plugin(&plugin_id);
+        }
         let Some(plugin) = self.state.installed_plugins.get(&plugin_id).cloned() else {
             return encode_error(id, "plugin_not_found", "plugin not found");
         };
@@ -779,7 +791,8 @@ mod tests {
     #[cfg(unix)]
     use crate::api::schema::PaneListParams;
     use crate::api::schema::{
-        Method, PluginSourceInfo, PluginSourceKind, Request, SuccessResponse,
+        Method, PluginSourceInfo, PluginSourceKind, RegionOpenParams, RegionResizeParams,
+        RegionTarget, Request, SuccessResponse,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1281,6 +1294,795 @@ command = ["echo", "build"]
 
         let result = load_plugin_manifest(&root.display().to_string(), true);
         assert!(matches!(result, Err(("invalid_plugin_action_id", _))));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Deliberately different from `DEFAULT_REGION_SIZE` so tests can tell
+    /// a manifest-sourced size from a fallback.
+    const MANIFEST_SIZE: u16 = 27;
+
+    fn region_plugin_manifest(id: &str) -> String {
+        format!(
+            r#"
+id = "{id}"
+name = "Region Plugin"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer"
+anchor = "right"
+scope = "session"
+size = 27
+min_size = 18
+max_size = 60
+command = ["sh", "-c", "sleep 30"]
+"#
+        )
+    }
+
+    fn open_region(app: &mut App, plugin_id: &str, params: RegionOpenParams) -> String {
+        app.handle_api_request(Request {
+            id: "region-open".into(),
+            method: Method::RegionOpen(RegionOpenParams {
+                plugin_id: plugin_id.into(),
+                ..params
+            }),
+        })
+    }
+
+    fn region_open_params(plugin_id: &str) -> RegionOpenParams {
+        RegionOpenParams {
+            plugin_id: plugin_id.into(),
+            entrypoint: "explorer".into(),
+            size: None,
+            cwd: None,
+            focus: false,
+            env: std::collections::HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn region_open_claims_the_slot_and_a_second_open_is_refused() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-open");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-open"));
+        link_manifest(&mut app, &root);
+
+        let opened = open_region(
+            &mut app,
+            "example.region-open",
+            region_open_params("example.region-open"),
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&opened) else {
+            panic!("expected region opened: {opened}");
+        };
+        assert_eq!(region.plugin_id, "example.region-open");
+        assert_eq!(region.entrypoint, "explorer");
+        assert_eq!(region.anchor, crate::region::RegionAnchor::Right);
+        assert_eq!(region.scope, crate::region::RegionScope::Session);
+        assert_eq!(region.min_size, 18);
+        assert_eq!(region.max_size, 60);
+        assert!(region.visible);
+
+        // A second open for the same slot is an error, not a silent replace.
+        let second = open_region(
+            &mut app,
+            "example.region-open",
+            region_open_params("example.region-open"),
+        );
+        let response: crate::api::schema::ErrorResponse = serde_json::from_str(&second).unwrap();
+        assert_eq!(response.error.code, "region_slot_occupied");
+        assert_eq!(app.state.regions.len(), 1);
+
+        app.close_region(&region.region_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn region_open_rejects_an_entrypoint_from_another_plugin() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-foreign-entrypoint");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-foreign"));
+        link_manifest(&mut app, &root);
+
+        let response = open_region(
+            &mut app,
+            "example.region-foreign",
+            RegionOpenParams {
+                entrypoint: "not-declared".into(),
+                ..region_open_params("example.region-foreign")
+            },
+        );
+
+        let response: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(response.error.code, "plugin_region_not_found");
+        assert!(app.state.regions.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn region_open_env_cannot_overwrite_herdr_owned_variables() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-hostile-env");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-env"));
+        link_manifest(&mut app, &root);
+        let plugin = app
+            .state
+            .installed_plugins
+            .get("example.region-env")
+            .cloned()
+            .expect("plugin linked");
+
+        // A hostile caller supplies every Herdr-owned key it might hijack.
+        let hostile = [
+            (crate::api::SOCKET_PATH_ENV_VAR, "/tmp/evil.sock"),
+            ("HERDR_ENV", "0"),
+            ("HERDR_PLUGIN_ID", "someone.else"),
+            ("HERDR_PLUGIN_ROOT", "/tmp/evil"),
+            ("HERDR_PLUGIN_CONFIG_DIR", "/tmp/evil"),
+            ("HERDR_PLUGIN_STATE_DIR", "/tmp/evil"),
+            ("HERDR_PLUGIN_ENTRYPOINT_ID", "evil"),
+            ("HERDR_PLUGIN_CONTEXT_JSON", "{\"evil\":true}"),
+            ("HERDR_BIN_PATH", "/tmp/evil/herdr"),
+            ("SAFE_PASSTHROUGH", "kept"),
+        ];
+        let env: std::collections::HashMap<String, String> = hostile
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+
+        // region.open builds its child environment through this projection, so
+        // asserting on it is asserting on what a region program would inherit.
+        let context = app.current_plugin_context("plugin-region");
+        let built = app
+            .plugin_pane_launch_env(&plugin, "explorer", &root, env, &context)
+            .expect("launch env builds");
+
+        // Assert over the pairs, not a map: the projection returns a Vec, and
+        // collecting it into a map would let a later Herdr-owned push mask a
+        // surviving hostile entry, making this test pass with no protection.
+        for (key, hostile_value) in hostile.iter().take(hostile.len() - 1) {
+            assert!(
+                !built.iter().any(|(k, v)| k == key && v == hostile_value),
+                "{key} survived the projection with the caller's value"
+            );
+        }
+        let built: std::collections::HashMap<String, String> = built.into_iter().collect();
+        assert_eq!(
+            built.get("HERDR_PLUGIN_ID").map(String::as_str),
+            Some("example.region-env"),
+            "the owning plugin id must survive a hostile env map"
+        );
+        assert_eq!(
+            built.get("HERDR_ENV").map(String::as_str),
+            Some("1"),
+            "HERDR_ENV must remain Herdr's own value"
+        );
+        assert_eq!(
+            built.get("HERDR_PLUGIN_ENTRYPOINT_ID").map(String::as_str),
+            Some("explorer"),
+            "the entrypoint id must be the one Herdr resolved"
+        );
+        assert_eq!(
+            built.get("SAFE_PASSTHROUGH").map(String::as_str),
+            Some("kept"),
+            "a non-protected key should still pass through"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn region_snapshot(
+        plugin_id: &str,
+        size: u16,
+        visible: bool,
+    ) -> crate::persist::RegionSnapshot {
+        crate::persist::RegionSnapshot {
+            plugin_id: plugin_id.into(),
+            entrypoint: "explorer".into(),
+            anchor: crate::region::RegionAnchor::Right,
+            scope: crate::region::RegionScope::Session,
+            size,
+            visible,
+        }
+    }
+
+    /// A region plugin whose program exits immediately with `code`.
+    fn exiting_region_manifest(id: &str, code: u8) -> String {
+        format!(
+            r#"
+id = "{id}"
+name = "Exiting Region"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer"
+anchor = "right"
+scope = "session"
+min_size = 18
+max_size = 60
+command = ["sh", "-c", "exit {code}"]
+"#
+        )
+    }
+
+    async fn wait_for_region_exit(app: &mut App, pane_id: crate::layout::PaneId) {
+        for _ in 0..200 {
+            if app
+                .terminal_runtimes
+                .iter()
+                .any(|(_, rt)| rt.child_exit_code().is_some())
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        app.close_region_for_exited_pane(pane_id);
+    }
+
+    #[tokio::test]
+    async fn a_region_exiting_non_zero_closes_and_raises_a_toast() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-exit-nonzero");
+        write_manifest_content(&root, &exiting_region_manifest("example.region-crash", 3));
+        link_manifest(&mut app, &root);
+        open_region(
+            &mut app,
+            "example.region-crash",
+            region_open_params("example.region-crash"),
+        );
+        let pane_id = app
+            .state
+            .regions
+            .get(crate::region::RegionAnchor::Right)
+            .expect("region open")
+            .pane_id;
+
+        wait_for_region_exit(&mut app, pane_id).await;
+
+        assert!(app.state.regions.is_empty(), "the slot must be released");
+        let toast = app.state.toast.as_ref().expect("a non-zero exit toasts");
+        assert!(
+            toast.context.contains("example.region-crash"),
+            "the toast names the plugin: {}",
+            toast.context
+        );
+        assert!(
+            toast.context.contains('3'),
+            "the toast names the status: {}",
+            toast.context
+        );
+        assert!(
+            toast.target.is_none(),
+            "a region is not a pane, so there is nothing to focus"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_region_exiting_zero_closes_quietly() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-exit-zero");
+        write_manifest_content(&root, &exiting_region_manifest("example.region-clean", 0));
+        link_manifest(&mut app, &root);
+        open_region(
+            &mut app,
+            "example.region-clean",
+            region_open_params("example.region-clean"),
+        );
+        let pane_id = app
+            .state
+            .regions
+            .get(crate::region::RegionAnchor::Right)
+            .expect("region open")
+            .pane_id;
+
+        wait_for_region_exit(&mut app, pane_id).await;
+
+        assert!(app.state.regions.is_empty(), "the slot must be released");
+        assert!(
+            app.state.toast.is_none(),
+            "a clean exit must not raise a toast"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn restoring_a_snapshot_respawns_the_region_into_its_slot() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-restore");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-restore"));
+        link_manifest(&mut app, &root);
+
+        app.restore_regions(vec![region_snapshot("example.region-restore", 41, false)]);
+
+        assert_eq!(app.state.regions.len(), 1);
+        let region = app
+            .state
+            .regions
+            .get(crate::region::RegionAnchor::Right)
+            .expect("region restored into the right slot");
+        assert_eq!(region.plugin_id, "example.region-restore");
+        assert_eq!(region.entrypoint, "explorer");
+        assert_eq!(region.size(), 41, "the persisted size is restored");
+        assert!(
+            !region.visible,
+            "persisted visibility wins over the config default"
+        );
+        // A fresh program, not restored terminal contents.
+        assert!(app.state.terminals.contains_key(&region.terminal_id));
+
+        let region_id = region.region_id.to_string();
+        app.close_region(&region_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn restoring_a_snapshot_clamps_a_persisted_size_out_of_bounds() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-restore-clamp");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-clamp"));
+        link_manifest(&mut app, &root);
+
+        // A hand-edited session file must not escape the manifest's bounds.
+        app.restore_regions(vec![region_snapshot(
+            "example.region-clamp",
+            u16::MAX,
+            true,
+        )]);
+
+        let region = app
+            .state
+            .regions
+            .get(crate::region::RegionAnchor::Right)
+            .expect("region restored");
+        assert_eq!(
+            region.size(),
+            60,
+            "max_size from the manifest still applies"
+        );
+
+        let region_id = region.region_id.to_string();
+        app.close_region(&region_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn restoring_drops_regions_whose_provider_is_gone_or_disabled() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-restore-stale");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-stale"));
+        link_manifest(&mut app, &root);
+
+        // Unknown plugin: nothing to respawn.
+        app.restore_regions(vec![region_snapshot("example.not-installed", 30, true)]);
+        assert!(app.state.regions.is_empty(), "an unknown plugin is dropped");
+
+        // Known plugin, entrypoint it no longer declares.
+        let mut stale = region_snapshot("example.region-stale", 30, true);
+        stale.entrypoint = "retired".into();
+        app.restore_regions(vec![stale]);
+        assert!(
+            app.state.regions.is_empty(),
+            "an undeclared entrypoint is dropped"
+        );
+
+        // Disabled plugin.
+        app.handle_api_request(Request {
+            id: "disable".into(),
+            method: Method::PluginDisable(PluginSetEnabledParams {
+                plugin_id: "example.region-stale".into(),
+            }),
+        });
+        app.restore_regions(vec![region_snapshot("example.region-stale", 30, true)]);
+        assert!(
+            app.state.regions.is_empty(),
+            "a disabled plugin's region is dropped"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn region_open_uses_the_manifest_size_then_config_then_the_request() {
+        let root = unique_temp_path("region-size-precedence");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-size"));
+
+        // 1. No config and no request: the manifest's own size applies. It is
+        //    deliberately not DEFAULT_REGION_SIZE, so falling through to the
+        //    built-in default would fail this assertion.
+        assert_ne!(
+            MANIFEST_SIZE,
+            crate::region::DEFAULT_REGION_SIZE,
+            "the fixture size must differ from the default to discriminate"
+        );
+        let mut app = test_app();
+        link_manifest(&mut app, &root);
+        let opened = open_region(
+            &mut app,
+            "example.region-size",
+            region_open_params("example.region-size"),
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&opened) else {
+            panic!("expected region opened: {opened}");
+        };
+        assert_eq!(
+            region.size, MANIFEST_SIZE,
+            "the manifest size must be reachable"
+        );
+        app.close_region(&region.region_id);
+
+        // 2. User config overrides the manifest.
+        app.state.regions_config.right.size = Some(45);
+        let opened = open_region(
+            &mut app,
+            "example.region-size",
+            region_open_params("example.region-size"),
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&opened) else {
+            panic!("expected region opened: {opened}");
+        };
+        assert_eq!(region.size, 45, "user config must win over the manifest");
+        app.close_region(&region.region_id);
+
+        // 3. An explicit request wins over both.
+        let opened = open_region(
+            &mut app,
+            "example.region-size",
+            RegionOpenParams {
+                size: Some(50),
+                ..region_open_params("example.region-size")
+            },
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&opened) else {
+            panic!("expected region opened: {opened}");
+        };
+        assert_eq!(region.size, 50, "an explicit request must win");
+        app.close_region(&region.region_id);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn region_resize_clamps_a_hostile_size_into_the_manifest_bounds() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-resize");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-resize"));
+        link_manifest(&mut app, &root);
+        let opened = open_region(
+            &mut app,
+            "example.region-resize",
+            region_open_params("example.region-resize"),
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&opened) else {
+            panic!("expected region opened: {opened}");
+        };
+
+        for (requested, expected) in [(0_u16, 18_u16), (u16::MAX, 60), (40, 40)] {
+            let response = app.handle_api_request(Request {
+                id: "region-resize".into(),
+                method: Method::RegionResize(RegionResizeParams {
+                    region_id: region.region_id.clone(),
+                    size: requested,
+                }),
+            });
+            let ResponseResult::RegionResized { region } = response_result(&response) else {
+                panic!("expected region resized: {response}");
+            };
+            assert_eq!(
+                region.size, expected,
+                "requesting {requested} must clamp to {expected}"
+            );
+        }
+
+        app.close_region(&region.region_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn region_close_releases_the_slot_and_is_idempotent() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-close");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-close"));
+        link_manifest(&mut app, &root);
+        let opened = open_region(
+            &mut app,
+            "example.region-close",
+            region_open_params("example.region-close"),
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&opened) else {
+            panic!("expected region opened: {opened}");
+        };
+
+        let close = || Request {
+            id: "region-close".into(),
+            method: Method::RegionClose(RegionTarget {
+                region_id: region.region_id.clone(),
+            }),
+        };
+
+        let first = app.handle_api_request(close());
+        assert!(matches!(
+            response_result(&first),
+            ResponseResult::RegionClosed { .. }
+        ));
+        assert!(app.state.regions.is_empty());
+
+        let second = app.handle_api_request(close());
+        let response: crate::api::schema::ErrorResponse = serde_json::from_str(&second).unwrap();
+        assert_eq!(response.error.code, "region_not_found");
+
+        // The slot is free again.
+        let reopened = open_region(
+            &mut app,
+            "example.region-close",
+            region_open_params("example.region-close"),
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&reopened) else {
+            panic!("expected the slot to be reusable: {reopened}");
+        };
+        app.close_region(&region.region_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn disabling_a_plugin_closes_its_regions() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-disable");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-disable"));
+        link_manifest(&mut app, &root);
+        open_region(
+            &mut app,
+            "example.region-disable",
+            region_open_params("example.region-disable"),
+        );
+        assert_eq!(app.state.regions.len(), 1);
+
+        app.handle_api_request(Request {
+            id: "disable".into(),
+            method: Method::PluginDisable(PluginSetEnabledParams {
+                plugin_id: "example.region-disable".into(),
+            }),
+        });
+
+        assert!(
+            app.state.regions.is_empty(),
+            "a disabled plugin's regions must close"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn regions_do_not_appear_in_pane_list() {
+        let mut app = test_app();
+        let root = unique_temp_path("region-not-a-pane");
+        write_manifest_content(&root, &region_plugin_manifest("example.region-pane"));
+        link_manifest(&mut app, &root);
+        let opened = open_region(
+            &mut app,
+            "example.region-pane",
+            region_open_params("example.region-pane"),
+        );
+        let ResponseResult::RegionOpened { region } = response_result(&opened) else {
+            panic!("expected region opened: {opened}");
+        };
+
+        let listed = app.handle_api_request(Request {
+            id: "pane-list".into(),
+            method: Method::PaneList(crate::api::schema::PaneListParams::default()),
+        });
+
+        // A region has a region_id and no pane_id: making it a pane would drag
+        // it back into every tab-bound code path regions exist to avoid.
+        assert!(
+            !listed.contains(region.region_id.as_str()),
+            "a region must not appear in pane.list: {listed}"
+        );
+        app.close_region(&region.region_id);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn region_manifest_loads_with_anchor_scope_and_bounds() {
+        let root = unique_temp_path("plugin-region");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.region"
+name = "Region"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer"
+anchor = "right"
+scope = "session"
+size = 32
+min_size = 18
+max_size = 60
+command = ["herdr-sidebar"]
+"#,
+        );
+
+        let plugin =
+            load_plugin_manifest(&root.display().to_string(), true).expect("region manifest loads");
+
+        assert_eq!(plugin.regions.len(), 1);
+        let region = &plugin.regions[0];
+        assert_eq!(region.id, "explorer");
+        assert_eq!(region.title, "Explorer");
+        assert_eq!(region.anchor, crate::region::RegionAnchor::Right);
+        assert_eq!(region.scope, crate::region::RegionScope::Session);
+        assert_eq!(region.size, Some(32));
+        assert_eq!(region.min_size, Some(18));
+        assert_eq!(region.max_size, Some(60));
+        assert_eq!(region.command, ["herdr-sidebar"]);
+        // Regions are their own section: declaring one adds no panes.
+        assert!(plugin.panes.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn region_manifest_defaults_anchor_scope_and_leaves_sizes_unset() {
+        let root = unique_temp_path("plugin-region-defaults");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.region-defaults"
+name = "Region Defaults"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer"
+command = ["herdr-sidebar"]
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true)
+            .expect("region manifest loads without anchor or scope");
+
+        let region = &plugin.regions[0];
+        assert_eq!(region.anchor, crate::region::RegionAnchor::Right);
+        assert_eq!(region.scope, crate::region::RegionScope::Session);
+        assert_eq!(region.size, None);
+        assert_eq!(region.min_size, None);
+        assert_eq!(region.max_size, None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn region_manifest_rejects_unsupported_anchor_and_scope() {
+        let cases = [
+            (
+                "plugin-region-bottom",
+                r#"
+id = "example.region-bottom"
+name = "Region Bottom"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "drawer"
+title = "Drawer"
+anchor = "bottom"
+command = ["echo", "drawer"]
+"#,
+                "invalid_plugin_region_anchor",
+            ),
+            (
+                "plugin-region-workspace-scope",
+                r#"
+id = "example.region-workspace"
+name = "Region Workspace"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer"
+scope = "workspace"
+command = ["echo", "explorer"]
+"#,
+                "invalid_plugin_region_scope",
+            ),
+        ];
+
+        for (name, manifest, expected_message) in cases {
+            let root = unique_temp_path(name);
+            write_manifest_content(&root, manifest);
+
+            let result = load_plugin_manifest(&root.display().to_string(), true);
+
+            // Phase 2 values parse as a manifest error naming the unsupported
+            // value, not as a silent fallback to the supported one.
+            let Err((code, message)) = result else {
+                panic!("{name}: expected an error, got a loaded manifest");
+            };
+            assert_eq!(code, "plugin_manifest_parse_failed", "{name}");
+            assert!(
+                message.contains(expected_message),
+                "{name}: expected {expected_message} in {message}"
+            );
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn link_rejects_duplicate_region_ids() {
+        let root = unique_temp_path("plugin-duplicate-region");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.duplicate-region"
+name = "Duplicate Region"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer"
+command = ["echo", "a"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer again"
+command = ["echo", "b"]
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+
+        assert!(matches!(result, Err(("duplicate_plugin_region_id", _))));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn link_rejects_two_regions_claiming_one_slot() {
+        let root = unique_temp_path("plugin-region-slot-conflict");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.region-slot"
+name = "Region Slot"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos", "windows"]
+
+[[regions]]
+id = "explorer"
+title = "Explorer"
+anchor = "right"
+scope = "session"
+command = ["echo", "a"]
+
+[[regions]]
+id = "outline"
+title = "Outline"
+anchor = "right"
+scope = "session"
+command = ["echo", "b"]
+"#,
+        );
+
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+
+        // Two providers fighting over one edge has no correct resolution, so
+        // the author hears about it at link time rather than on a failed open.
+        assert!(matches!(result, Err(("conflicting_plugin_region_slot", _))));
         let _ = std::fs::remove_dir_all(root);
     }
 

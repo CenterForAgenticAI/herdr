@@ -29,7 +29,9 @@ impl App {
         context
     }
 
-    pub(super) fn current_plugin_context(&self, correlation_id: &str) -> PluginInvocationContext {
+    /// `pub(crate)` because the region lifecycle in `crate::app::region`
+    /// builds plugin context outside `crate::app::api`.
+    pub(crate) fn current_plugin_context(&self, correlation_id: &str) -> PluginInvocationContext {
         let Some(ws_idx) = self.state.active else {
             return empty_plugin_context(correlation_id);
         };

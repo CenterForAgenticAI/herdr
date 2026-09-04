@@ -43,6 +43,7 @@ mod product_announcements;
 mod protocol;
 mod pty;
 mod raw_input;
+mod region;
 mod release_notes;
 mod remote;
 mod render_prof;

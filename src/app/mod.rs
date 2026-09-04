@@ -17,6 +17,7 @@ mod git_refresh;
 mod ids;
 pub(crate) mod pane_graphics;
 mod popup;
+mod region;
 mod runtime;
 mod session;
 pub mod state;
@@ -367,6 +368,8 @@ impl App {
         // Try to restore previous session
         let mut restored_terminals = std::collections::HashMap::new();
         let mut restored_terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        // Persisted region slots, respawned once plugins are loaded below.
+        let mut restored_regions: Vec<crate::persist::RegionSnapshot> = Vec::new();
         let (workspaces, active, selected) = if !policy.restore_session {
             (Vec::new(), None, 0)
         } else if let Some(snap) = crate::persist::load() {
@@ -390,6 +393,7 @@ impl App {
             );
             restored_terminals = terminals;
             restored_terminal_runtimes = terminal_runtimes.into();
+            restored_regions = snap.regions.clone();
             if ws.is_empty() {
                 crate::logging::session_restored(0, "empty");
                 (Vec::new(), None, 0)
@@ -481,6 +485,7 @@ impl App {
             agent_view_override: None,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
+            regions_config: config.ui.regions,
             next_agent_state_change_seq: 0,
             confirm_close: config.ui.confirm_close,
             pane_borders: config.ui.pane_borders,
@@ -513,6 +518,8 @@ impl App {
             installed_plugins: load_plugin_registry(policy.persist_plugin_registry),
             plugin_panes: std::collections::HashMap::new(),
             popup_pane: None,
+            regions: crate::region::RegionState::default(),
+            region_focus: None,
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
@@ -619,6 +626,7 @@ impl App {
         };
         app.configure_tab_bar_status(&config.ui.tab_bar_right, &config.ui.tab_bar_right_separator);
         app.configure_window_title(&config.ui.window_title);
+        app.restore_regions(restored_regions);
         app
     }
 
@@ -836,6 +844,7 @@ impl App {
                     agent_panel_sort_from_config(config.ui.agent_panel_sort);
                 self.state.sidebar_agents = config.ui.sidebar.agents.clone();
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
+                self.state.regions_config = config.ui.regions;
                 self.state.sound = config.ui.sound.clone();
                 self.state.toast_config = config.ui.toast.clone();
             }

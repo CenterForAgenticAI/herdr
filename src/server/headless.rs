@@ -2471,6 +2471,49 @@ impl HeadlessServer {
                 }
                 foreground_changed | geometry_changed || runtime.scroll_metrics() != scroll_before
             }
+            ServerEvent::ClientShellRegionInput {
+                client_id,
+                terminal_id,
+                events,
+            } => {
+                if self.handoff_in_progress
+                    || !self.clients.get(&client_id).is_some_and(|client| {
+                        matches!(client.mode, ClientConnectionMode::ClientShell)
+                    })
+                {
+                    return false;
+                }
+                let pixel_mouse = self.clients.get(&client_id).is_some_and(|client| {
+                    client.pixel_mouse && client.host_sgr_pixels_active == Some(true)
+                });
+                let Some(region_terminal_id) = self
+                    .app
+                    .state
+                    .regions
+                    .get(crate::region::RegionAnchor::Right)
+                    .map(|region| region.terminal_id.clone())
+                else {
+                    return false;
+                };
+                if region_terminal_id.as_str() != terminal_id {
+                    return false;
+                }
+                let Some(runtime) = self.app.terminal_runtimes.get(&region_terminal_id) else {
+                    return false;
+                };
+                let mut events = events;
+                super::pane_input::downgrade_ineligible_pixel_mouse(
+                    &mut events,
+                    pixel_mouse,
+                    runtime.current_size(),
+                    runtime.pixel_size(),
+                );
+                let scroll_before = runtime.scroll_metrics();
+                if let Err(err) = apply_client_pane_input_events(runtime, &events) {
+                    warn!(client_id, terminal_id, err = %err, "targeted client region input failed");
+                }
+                runtime.scroll_metrics() != scroll_before
+            }
             ServerEvent::ClientShellEndpointRequestError {
                 client_id,
                 boot_id,

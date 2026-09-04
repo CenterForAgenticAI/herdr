@@ -390,6 +390,39 @@ impl ClientShellState {
                 });
             }
         }
+        self.hits.region = None;
+        if let (Some(region), Some(outer)) = (surface.region.as_deref(), layout.region) {
+            let inner = crate::region::region_inner_rect(outer);
+            if inner.width > 0 && inner.height > 0 {
+                let mut composed = frame.to_ratatui_buffer()?;
+                let border_color = if region.focused {
+                    self.config.palette.accent
+                } else {
+                    self.config.palette.surface1
+                };
+                let block = ratatui::widgets::Block::default()
+                    .borders(ratatui::widgets::Borders::ALL)
+                    .border_style(ratatui::style::Style::default().fg(border_color))
+                    .title(region.title.clone())
+                    .style(ratatui::style::Style::default().bg(self.config.palette.panel_bg));
+                ratatui::widgets::Widget::render(ratatui::widgets::Clear, outer, &mut composed);
+                ratatui::widgets::Widget::render(block, outer, &mut composed);
+                frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
+                blit_pane_surface(&mut frame, &region.frame, inner);
+                self.hits.region = Some(PaneHit {
+                    rect: outer,
+                    inner_rect: inner,
+                    scrollbar_rect: None,
+                    scroll: None,
+                    pane_id: region.terminal_id.clone(),
+                    popup: false,
+                    mouse_reporting: region.mouse_reporting,
+                    sgr_pixel_mouse: region.sgr_pixel_mouse,
+                    pixel_width: region.pixel_width,
+                    pixel_height: region.pixel_height,
+                });
+            }
+        }
         if !layout.mobile_header.is_empty()
             && self.mode == ClientShellMode::Navigate
             && self.overlay.is_none()

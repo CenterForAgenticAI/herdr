@@ -20,6 +20,32 @@ impl ClientShellState {
         }
     }
 
+    fn set_region_size_from_column(
+        &mut self,
+        region_id: String,
+        column: u16,
+        outcome: &mut ClientShellInput,
+    ) {
+        let Some(region_hit) = self.hits.region.as_ref() else {
+            return;
+        };
+        // The region is pinned to the right frame edge, so the dragged column
+        // implies an outer width from that column to the edge. The server clamps
+        // the request into the region's manifest bounds.
+        let right_edge = region_hit.rect.x.saturating_add(region_hit.rect.width);
+        let size = right_edge.saturating_sub(column);
+        if size == 0 {
+            return;
+        }
+        self.push_endpoint_method(
+            crate::api::schema::Method::RegionResize(crate::api::schema::RegionResizeParams {
+                region_id,
+                size,
+            }),
+            outcome,
+        );
+    }
+
     fn set_sidebar_section_from_row(&mut self, row: u16, outcome: &mut ClientShellInput) {
         let divider = self.hits.sidebar_divider;
         if divider.height == 0 {
@@ -921,7 +947,47 @@ impl ClientShellState {
         if self.handle_mobile_mouse(mouse, outcome) {
             return;
         }
+        // Desktop region strip: a left click on the inner-left edge starts a
+        // resize drag; a left click anywhere else inside focuses the region so
+        // the client can route keys to it locally on the next frame.
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if let Some(region_hit) = self.hits.region.clone() {
+                let region_id = self
+                    .pane_surface
+                    .as_ref()
+                    .and_then(|surface| surface.region.as_deref())
+                    .map(|region| region.region_id.clone());
+                if let Some(region_id) = region_id {
+                    let on_edge = mouse.column == region_hit.rect.x
+                        && mouse.row >= region_hit.rect.y
+                        && mouse.row < region_hit.rect.bottom();
+                    if on_edge {
+                        self.chrome_drag = Some(ClientChromeDrag::RegionEdge { region_id });
+                        return;
+                    }
+                    if super::contains(region_hit.inner_rect, point) {
+                        self.push_endpoint_method(
+                            crate::api::schema::Method::RegionFocus(
+                                crate::api::schema::RegionTarget { region_id },
+                            ),
+                            outcome,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
         if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
+            let region_resize =
+                if let Some(ClientChromeDrag::RegionEdge { region_id }) = &self.chrome_drag {
+                    Some(region_id.clone())
+                } else {
+                    None
+                };
+            if let Some(region_id) = region_resize {
+                self.set_region_size_from_column(region_id, mouse.column, outcome);
+                return;
+            }
             match self.chrome_drag.as_ref() {
                 Some(ClientChromeDrag::SidebarWidth) => {
                     self.set_sidebar_width_from_column(mouse.column, outcome);
@@ -1100,6 +1166,7 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                Some(ClientChromeDrag::RegionEdge { .. }) => {}
                 None => {}
             }
             if let Some(press) = self.workspace_press.as_ref() {
@@ -1263,7 +1330,8 @@ impl ClientShellState {
                     | ClientChromeDrag::AgentScrollbar { .. }
                     | ClientChromeDrag::HelpScrollbar { .. }
                     | ClientChromeDrag::ProductAnnouncementScrollbar { .. }
-                    | ClientChromeDrag::ReleaseNotesScrollbar { .. } => {}
+                    | ClientChromeDrag::ReleaseNotesScrollbar { .. }
+                    | ClientChromeDrag::RegionEdge { .. } => {}
                 }
                 return;
             }

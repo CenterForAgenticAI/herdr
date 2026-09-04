@@ -129,6 +129,7 @@ fn surface() -> PaneSurfaceFrame {
         }],
         splits: Vec::new(),
         popup: None,
+        region: None,
         graphics: crate::protocol::SurfaceGraphicsScene::default(),
     }
 }

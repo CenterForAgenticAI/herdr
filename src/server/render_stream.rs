@@ -447,6 +447,7 @@ mod tests {
                 pixel_width: 0,
                 pixel_height: 0,
             })),
+            region: None,
             graphics: crate::protocol::SurfaceGraphicsScene::default(),
         }
     }

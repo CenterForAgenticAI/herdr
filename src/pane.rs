@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::io;
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU16, AtomicU32, AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
 };
 
@@ -1230,6 +1230,10 @@ async fn run_terminal_compression_task(
     }
 }
 
+/// Sentinel meaning "no exit code recorded": the child is still running, or it
+/// was terminated by a signal rather than exiting normally.
+pub const NO_EXIT_CODE: i32 = -1;
+
 /// PTY runtime for a pane. Owns the terminal, I/O channels, and background tasks.
 /// Dropping this aborts async tasks and closes the PTY. An already-running bounded
 /// compression step may finish before releasing its terminal reference.
@@ -1241,6 +1245,9 @@ pub struct PaneRuntime {
     child_pid: Arc<AtomicU32>,
     reported_cwd: Arc<Mutex<Option<std::path::PathBuf>>>,
     child_wait_completed: Option<Arc<AtomicBool>>,
+    /// Exit code from `child.wait()`, or `NO_EXIT_CODE` when the child has
+    /// not exited or was killed by a signal.
+    child_exit_code: Arc<AtomicI32>,
     kitty_keyboard_flags: Arc<AtomicU16>,
     content_seq: Arc<AtomicU64>,
     content_write_lock: Arc<Mutex<()>>,
@@ -2214,6 +2221,7 @@ impl PaneRuntime {
             child_pid,
             reported_cwd,
             child_wait_completed: None,
+            child_exit_code: Arc::new(AtomicI32::new(NO_EXIT_CODE)),
             kitty_keyboard_flags,
             content_seq,
             content_write_lock,
@@ -2275,12 +2283,14 @@ impl PaneRuntime {
         let child_pid = Arc::new(AtomicU32::new(0));
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
+        let child_exit_code = Arc::new(AtomicI32::new(NO_EXIT_CODE));
         let content_seq = Arc::new(AtomicU64::new(0));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
         {
             let child_pid = child_pid.clone();
             let child_wait_completed = child_wait_completed.clone();
+            let child_exit_code = child_exit_code.clone();
             let events = events.clone();
             let rt = tokio::runtime::Handle::current();
             let mut child = spawned.child;
@@ -2293,6 +2303,10 @@ impl PaneRuntime {
                     Ok(status) => {
                         let status_text = format!("{status:?}");
                         crate::logging::pane_exited(pane_id.raw(), &status_text);
+                        child_exit_code.store(
+                            i32::try_from(status.exit_code()).unwrap_or(NO_EXIT_CODE),
+                            Ordering::Release,
+                        );
                     }
                     Err(e) => crate::logging::pane_exit_failed(pane_id.raw(), &e.to_string()),
                 }
@@ -2782,6 +2796,7 @@ impl PaneRuntime {
             child_pid,
             reported_cwd,
             child_wait_completed: Some(child_wait_completed),
+            child_exit_code,
             kitty_keyboard_flags,
             content_seq,
             content_write_lock,
@@ -2949,6 +2964,16 @@ impl PaneRuntime {
     #[cfg(any(unix, test))]
     pub fn input_state(&self) -> Option<InputState> {
         self.terminal.input_state()
+    }
+
+    /// Exit code of the child process, once it has exited normally.
+    ///
+    /// `None` while it runs, or when it was killed by a signal.
+    pub fn child_exit_code(&self) -> Option<i32> {
+        match self.child_exit_code.load(Ordering::Acquire) {
+            NO_EXIT_CODE => None,
+            code => Some(code),
+        }
     }
 
     pub fn bracketed_paste_enabled(&self) -> bool {
@@ -3351,6 +3376,7 @@ impl PaneRuntime {
                 child_pid: Arc::new(AtomicU32::new(0)),
                 reported_cwd: Arc::new(Mutex::new(None)),
                 child_wait_completed: None,
+                child_exit_code: Arc::new(AtomicI32::new(NO_EXIT_CODE)),
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 content_seq: Arc::new(AtomicU64::new(0)),
                 content_write_lock: Arc::new(Mutex::new(())),
@@ -4015,6 +4041,7 @@ mod tests {
             child_pid: Arc::new(AtomicU32::new(0)),
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
+            child_exit_code: Arc::new(AtomicI32::new(NO_EXIT_CODE)),
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             content_seq: Arc::new(AtomicU64::new(0)),
             content_write_lock: Arc::new(Mutex::new(())),
@@ -4052,6 +4079,7 @@ mod tests {
             child_pid: Arc::new(AtomicU32::new(0)),
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
+            child_exit_code: Arc::new(AtomicI32::new(NO_EXIT_CODE)),
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             content_seq: Arc::new(AtomicU64::new(0)),
             content_write_lock: Arc::new(Mutex::new(())),

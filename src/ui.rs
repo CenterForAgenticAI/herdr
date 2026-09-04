@@ -92,16 +92,25 @@ fn compute_view_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
+    // One keyed lookup and one subtraction per compute_view, never per pane or tab.
+    // A region reserves frame area beside the tab surface so panes never render under it.
+    let region_layout = crate::region::layout_regions(
+        area,
+        app.regions.shown_size(crate::region::RegionAnchor::Right),
+    );
+    let main_area = region_layout.remaining;
+
     let TabSurfaceLayout { pane_infos, .. } =
-        compute_tab_surface(app, terminal_runtimes, area, resize_panes, cell_size);
+        compute_tab_surface(app, terminal_runtimes, main_area, resize_panes, cell_size);
 
     if resize_panes {
-        resize_background_tab_panes(app, terminal_runtimes, area, cell_size);
-        resize_popup_pane(app, terminal_runtimes, area, cell_size);
+        resize_background_tab_panes(app, terminal_runtimes, main_area, cell_size);
+        resize_popup_pane(app, terminal_runtimes, main_area, cell_size);
+        resize_region(app, terminal_runtimes, region_layout.right, cell_size);
     }
 
     app.view = crate::app::ViewState {
-        terminal_area: area,
+        terminal_area: main_area,
         pane_infos,
     };
 }
@@ -126,6 +135,36 @@ fn resize_background_tab_panes(
                 cell_size,
             );
         }
+    }
+}
+
+/// Resize the right-anchored region's terminal to its computed rectangle.
+///
+/// Resizes exactly one terminal and never triggers a session-wide pane sweep.
+/// A hidden region yields `None` for `outer`, so it does no resize work.
+fn resize_region(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    outer: Option<Rect>,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) {
+    let Some(outer) = outer else {
+        return;
+    };
+    let Some(region) = app.regions.get(crate::region::RegionAnchor::Right) else {
+        return;
+    };
+    if app.direct_attach_resize_locks.contains(&region.terminal_id) {
+        return;
+    }
+    let inner = crate::region::region_inner_rect(outer);
+    if let Some(rt) = terminal_runtimes.get(&region.terminal_id) {
+        rt.resize(
+            inner.height,
+            inner.width,
+            cell_size.width_px,
+            cell_size.height_px,
+        );
     }
 }
 

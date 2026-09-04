@@ -844,6 +844,38 @@ pub enum TabBarPositionConfig {
     Bottom,
 }
 
+/// Desktop regions reserved outside any tab's pane tree.
+///
+/// Phase 1 ships the right-anchored, session-scoped region only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(default)]
+pub struct RegionsConfig {
+    /// Right-anchored region settings.
+    pub right: RegionConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct RegionConfig {
+    /// Allow plugins to open a region at this anchor. Default: true.
+    pub enabled: bool,
+    /// Size along the anchored axis in cells: columns for the right region.
+    /// Unset defers to the plugin manifest; setting it overrides the manifest.
+    pub size: Option<u16>,
+    /// Open the region hidden, so it reserves no screen area. Default: false.
+    pub start_hidden: bool,
+}
+
+impl Default for RegionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            size: None,
+            start_hidden: false,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -906,6 +938,8 @@ pub struct UiConfig {
     pub status_indicators: StatusIndicatorStyle,
     /// Expanded sidebar row composition.
     pub sidebar: SidebarConfig,
+    /// Desktop regions reserved outside the tab pane tree.
+    pub regions: RegionsConfig,
     /// Accent color for highlights, borders, and navigation UI.
     /// Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250)).
     pub accent: String,
@@ -1129,6 +1163,7 @@ impl Default for UiConfig {
             _legacy_agent_panel_scope: None,
             status_indicators: StatusIndicatorStyle::Dots,
             sidebar: SidebarConfig::default(),
+            regions: RegionsConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
@@ -1341,6 +1376,46 @@ resume_agents_on_restore = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
+    }
+
+    #[test]
+    fn regions_default_to_an_enabled_visible_right_region() {
+        let config = Config::default();
+
+        assert!(config.ui.regions.right.enabled);
+        // Unset by default, so the plugin manifest's preferred size applies.
+        assert_eq!(config.ui.regions.right.size, None);
+        assert!(!config.ui.regions.right.start_hidden);
+    }
+
+    #[test]
+    fn region_config_parses_and_partial_tables_keep_defaults() {
+        let toml = r#"
+[ui.regions.right]
+enabled = false
+size = 48
+start_hidden = true
+"#;
+
+        let config: Config = toml::from_str(toml).unwrap();
+
+        assert!(!config.ui.regions.right.enabled);
+        assert_eq!(config.ui.regions.right.size, Some(48));
+        assert!(config.ui.regions.right.start_hidden);
+
+        // A table that sets one key keeps the defaults for the rest.
+        let partial: Config = toml::from_str("[ui.regions.right]\nsize = 20\n").unwrap();
+
+        assert_eq!(partial.ui.regions.right.size, Some(20));
+        assert!(partial.ui.regions.right.enabled);
+        assert!(!partial.ui.regions.right.start_hidden);
+    }
+
+    #[test]
+    fn config_without_a_regions_table_keeps_current_behavior() {
+        let config: Config = toml::from_str("[ui]\nsidebar_width = 30\n").unwrap();
+
+        assert_eq!(config.ui.regions, RegionsConfig::default());
     }
 
     #[test]

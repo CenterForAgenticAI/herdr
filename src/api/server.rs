@@ -480,6 +480,11 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::PluginPaneOpen(_) => "plugin.pane.open",
         Method::PluginPaneFocus(_) => "plugin.pane.focus",
         Method::PluginPaneClose(_) => "plugin.pane.close",
+        Method::RegionOpen(_) => "region.open",
+        Method::RegionClose(_) => "region.close",
+        Method::RegionFocus(_) => "region.focus",
+        Method::RegionResize(_) => "region.resize",
+        Method::RegionList(_) => "region.list",
     }
 }
 

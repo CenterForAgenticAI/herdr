@@ -476,6 +476,7 @@ impl HeadlessServer {
                         panes,
                         splits,
                         popup,
+                        region,
                         graphics,
                         graphics_delivery: next_graphics_delivery,
                     } = render_client_shell_pane_surface(
@@ -492,7 +493,14 @@ impl HeadlessServer {
                         "full_render.render_tab_surface_virtual",
                         render_started,
                     );
-                    surface_parts = Some((panes, splits, popup, graphics, next_graphics_delivery));
+                    surface_parts = Some((
+                        panes,
+                        splits,
+                        popup,
+                        region,
+                        graphics,
+                        next_graphics_delivery,
+                    ));
                     frame
                 }
                 ClientConnectionMode::TerminalPending => continue,
@@ -543,29 +551,31 @@ impl HeadlessServer {
             };
             let has_graphics = surface_parts
                 .as_ref()
-                .is_some_and(|(_, _, _, graphics, _)| {
+                .is_some_and(|(_, _, _, _, graphics, _)| {
                     !graphics.assets.is_empty()
                         || !graphics.placements.is_empty()
                         || !graphics.retained_assets.is_empty()
                 });
             let mut next_shell_graphics_delivery = None;
-            let prepared = if let Some((panes, splits, popup, graphics, delivery)) = surface_parts {
-                next_shell_graphics_delivery = Some(delivery);
-                client
-                    .render_state
-                    .prepare_pane_surface(protocol::PaneSurfaceFrame {
-                        boot_id: self.client_shell_boot_id.clone(),
-                        projection_revision: shell_projection_revision,
-                        surface_revision: 0,
-                        frame,
-                        panes,
-                        splits,
-                        popup,
-                        graphics,
-                    })
-            } else {
-                client.render_state.prepare_frame(frame)
-            };
+            let prepared =
+                if let Some((panes, splits, popup, region, graphics, delivery)) = surface_parts {
+                    next_shell_graphics_delivery = Some(delivery);
+                    client
+                        .render_state
+                        .prepare_pane_surface(protocol::PaneSurfaceFrame {
+                            boot_id: self.client_shell_boot_id.clone(),
+                            projection_revision: shell_projection_revision,
+                            surface_revision: 0,
+                            frame,
+                            panes,
+                            splits,
+                            popup,
+                            region,
+                            graphics,
+                        })
+                } else {
+                    client.render_state.prepare_frame(frame)
+                };
             let Some(mut prepared) = prepared else {
                 client.clear_deferred_render();
                 crate::render_prof::event("full_render.skip_identical");

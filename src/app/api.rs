@@ -8,6 +8,7 @@ mod layouts;
 mod pane_graphics;
 mod panes;
 pub(crate) mod plugins;
+mod regions;
 pub(super) mod responses;
 mod session;
 mod tabs;
@@ -172,6 +173,10 @@ impl App {
                 .is_some_and(|popup| popup.pane_id == *pane_id)
             {
                 self.close_popup_pane();
+                return Vec::new();
+            }
+            // A region's program exiting closes the region and frees its slot.
+            if self.close_region_for_exited_pane(*pane_id).is_some() {
                 return Vec::new();
             }
             if worktree_restore_failed {
@@ -1203,6 +1208,21 @@ impl App {
             }
             Method::PluginPaneClose(params) => {
                 return self.handle_plugin_pane_close(request.id, params);
+            }
+            Method::RegionOpen(params) => {
+                return self.handle_region_open(request.id, params);
+            }
+            Method::RegionClose(params) => {
+                return self.handle_region_close(request.id, params);
+            }
+            Method::RegionFocus(params) => {
+                return self.handle_region_focus(request.id, params);
+            }
+            Method::RegionResize(params) => {
+                return self.handle_region_resize(request.id, params);
+            }
+            Method::RegionList(_) => {
+                return self.handle_region_list(request.id);
             }
             _ => {
                 return responses::encode_error(
