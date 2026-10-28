@@ -1208,6 +1208,228 @@ platforms = ["linux", "macos", "windows"]
         let _ = std::fs::remove_dir_all(root);
     }
 
+    fn region_manifest(id: &str, regions: &str) -> String {
+        format!(
+            r#"
+id = "{id}"
+name = "Region plugin"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+{regions}
+"#
+        )
+    }
+
+    fn load_region_manifest(
+        name: &str,
+        regions: &str,
+    ) -> Result<InstalledPluginInfo, (&'static str, String)> {
+        let root = unique_temp_path(name);
+        write_manifest_content(&root, &region_manifest(&format!("example.{name}"), regions));
+        let result = load_plugin_manifest(&root.display().to_string(), true);
+        let _ = std::fs::remove_dir_all(root);
+        result
+    }
+
+    #[test]
+    fn plugin_region_manifest_loads_with_defaults() {
+        let plugin = load_region_manifest(
+            "plugin-region-defaults",
+            r#"
+[[regions]]
+id = "notes"
+title = " Notes "
+command = ["./bin/notes"]
+"#,
+        )
+        .expect("minimal region manifest should load");
+        assert_eq!(plugin.regions.len(), 1);
+        let region = &plugin.regions[0];
+        assert_eq!(region.id, "notes");
+        assert_eq!(region.title, "Notes");
+        assert_eq!(region.edge, crate::region::RegionEdge::Right);
+        assert_eq!(region.scope, crate::region::RegionScope::Session);
+        assert_eq!(
+            (region.size, region.min_size, region.max_size),
+            (None, None, None)
+        );
+        assert_eq!(region.command, ["./bin/notes"]);
+        assert!(plugin.panes.is_empty());
+    }
+
+    #[test]
+    fn plugin_region_manifest_keeps_explicit_fields() {
+        let plugin = load_region_manifest(
+            "plugin-region-explicit",
+            r#"
+[[regions]]
+id = "notes"
+title = "Notes"
+edge = "right"
+scope = "session"
+size = 36
+min_size = 20
+max_size = 80
+platforms = ["macos"]
+command = ["./bin/notes", "--watch"]
+"#,
+        )
+        .expect("explicit region manifest should load");
+        let region = &plugin.regions[0];
+        assert_eq!(
+            (region.size, region.min_size, region.max_size),
+            (Some(36), Some(20), Some(80))
+        );
+        assert_eq!(
+            region.platforms,
+            Some(vec![crate::api::schema::PluginPlatform::Macos])
+        );
+    }
+
+    #[test]
+    fn plugin_region_manifest_rejects_unsupported_edge_and_scope_by_name() {
+        let err = load_region_manifest(
+            "plugin-region-left",
+            "[[regions]]\nid = \"notes\"\ntitle = \"Notes\"\nedge = \"left\"\ncommand = [\"x\"]\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.0, "invalid_plugin_region_edge");
+        assert!(
+            err.1.contains("'left'") && err.1.contains("right"),
+            "{}",
+            err.1
+        );
+
+        let err = load_region_manifest(
+            "plugin-region-tab-scope",
+            "[[regions]]\nid = \"notes\"\ntitle = \"Notes\"\nscope = \"tab\"\ncommand = [\"x\"]\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.0, "invalid_plugin_region_scope");
+        assert!(
+            err.1.contains("'tab'") && err.1.contains("session"),
+            "{}",
+            err.1
+        );
+    }
+
+    #[test]
+    fn plugin_region_manifest_rejects_bad_id_title_and_command() {
+        for (name, body, code) in [
+            (
+                "plugin-region-bad-id",
+                "id = \"no spaces\"\ntitle = \"T\"\ncommand = [\"x\"]",
+                "invalid_plugin_region_id",
+            ),
+            (
+                "plugin-region-dot-id",
+                "id = \"a.b\"\ntitle = \"T\"\ncommand = [\"x\"]",
+                "invalid_plugin_region_id",
+            ),
+            (
+                "plugin-region-bad-title",
+                "id = \"notes\"\ntitle = \"  \"\ncommand = [\"x\"]",
+                "invalid_plugin_region_title",
+            ),
+            (
+                "plugin-region-bad-command",
+                "id = \"notes\"\ntitle = \"T\"\ncommand = []",
+                "invalid_plugin_command",
+            ),
+        ] {
+            let err = load_region_manifest(name, &format!("[[regions]]\n{body}\n")).unwrap_err();
+            assert_eq!(err.0, code, "{name}: {}", err.1);
+        }
+    }
+
+    #[test]
+    fn plugin_region_manifest_rejects_duplicate_id_and_shared_slot() {
+        let err = load_region_manifest(
+            "plugin-region-dup-id",
+            r#"
+[[regions]]
+id = "notes"
+title = "Notes"
+command = ["x"]
+
+[[regions]]
+id = "notes"
+title = "Notes again"
+command = ["y"]
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(err.0, "duplicate_plugin_region_id");
+
+        let err = load_region_manifest(
+            "plugin-region-shared-slot",
+            r#"
+[[regions]]
+id = "notes"
+title = "Notes"
+command = ["x"]
+
+[[regions]]
+id = "quota"
+title = "Quota"
+edge = "right"
+command = ["y"]
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(err.0, "conflicting_plugin_region_slot");
+        assert!(
+            err.1.contains("notes") && err.1.contains("quota"),
+            "{}",
+            err.1
+        );
+    }
+
+    #[test]
+    fn plugin_region_bad_manifest_does_not_hide_other_plugins() {
+        let good = unique_temp_path("plugin-region-good");
+        let bad = unique_temp_path("plugin-region-bad");
+        let good_manifest = write_manifest_content(
+            &good,
+            &region_manifest(
+                "example.region-good",
+                "[[regions]]\nid = \"notes\"\ntitle = \"Notes\"\ncommand = [\"x\"]\n",
+            ),
+        );
+        let bad_manifest = write_manifest_content(
+            &bad,
+            &region_manifest(
+                "example.region-bad",
+                "[[regions]]\nid = \"notes\"\ntitle = \"Notes\"\nedge = \"top\"\ncommand = [\"x\"]\n",
+            ),
+        );
+        let mut good_entry = load_plugin_manifest(&good.display().to_string(), true).unwrap();
+        good_entry.regions.clear();
+        let mut bad_entry = good_entry.clone();
+        bad_entry.plugin_id = "example.region-bad".into();
+        bad_entry.manifest_path = bad_manifest.canonicalize().unwrap().display().to_string();
+        good_entry.manifest_path = good_manifest.canonicalize().unwrap().display().to_string();
+
+        let entries = crate::persist::plugin_registry::reload_manifests(
+            vec![good_entry, bad_entry],
+            |path, enabled| load_plugin_manifest(path, enabled).map_err(|(_, msg)| msg),
+        );
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].plugin_id, "example.region-good");
+        assert_eq!(entries[0].regions.len(), 1);
+        assert!(entries[0].warnings.is_empty());
+        assert_eq!(entries[1].plugin_id, "example.region-bad");
+        assert!(
+            entries[1].warnings.iter().any(|w| w.contains("top")),
+            "{:?}",
+            entries[1].warnings
+        );
+
+        let _ = std::fs::remove_dir_all(good);
+        let _ = std::fs::remove_dir_all(bad);
+    }
+
     #[test]
     fn plugin_manifest_preserves_whitespace_only_command_arguments() {
         let root = unique_temp_path("plugin-whitespace-argv");
