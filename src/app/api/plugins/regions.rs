@@ -472,6 +472,51 @@ command = ["sh", "-c", "sleep 30"]
         cleanup(app, &[root]);
     }
 
+    // Invariant 9: the launch env holds every Herdr-owned key exactly once, with Herdr's
+    // value, so no spawn path can pick the caller's copy by ordering.
+    #[tokio::test]
+    async fn launch_env_never_carries_caller_copies_of_herdr_owned_keys() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+        let plugin = app
+            .state
+            .installed_plugins
+            .get(BOARD_PLUGIN)
+            .cloned()
+            .expect("linked plugin");
+        let protected = [
+            "HERDR_SOCKET_PATH",
+            "HERDR_ENV",
+            "HERDR_PLUGIN_ID",
+            "HERDR_PLUGIN_ROOT",
+            "HERDR_PLUGIN_CONFIG_DIR",
+            "HERDR_PLUGIN_STATE_DIR",
+            "HERDR_PLUGIN_ENTRYPOINT_ID",
+            "HERDR_PLUGIN_CONTEXT_JSON",
+            "HERDR_BIN_PATH",
+        ];
+        let hostile: HashMap<String, String> = protected
+            .iter()
+            .map(|key| ((*key).to_string(), "spoofed".to_string()))
+            .collect();
+        let context = app.current_plugin_context("plugin-region");
+        let cwd = std::path::PathBuf::from(&plugin.plugin_root);
+        let env = app
+            .plugin_pane_launch_env(&plugin, "board", &cwd, hostile, &context)
+            .expect("launch env");
+
+        for key in protected {
+            let values: Vec<&str> = env
+                .iter()
+                .filter(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert!(values.len() <= 1, "{key} appears {} times", values.len());
+            assert!(!values.contains(&"spoofed"), "{key} kept the caller value");
+        }
+        cleanup(app, &[root]);
+    }
+
     // Invariant 4: every size the server applies is clamped to the region bounds.
     #[tokio::test]
     async fn open_and_resize_clamp_hostile_sizes_to_manifest_bounds() {
