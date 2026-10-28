@@ -101,6 +101,7 @@ herdr pane read w1:p2 --source recent --lines 50
 | 标签页 | `tab.create`、`tab.list`、`tab.get`、`tab.focus`、`tab.rename`、`tab.move`、`tab.close` |
 | 窗格 | `pane.split`、`pane.swap`、`pane.move`、`pane.zoom`、`pane.layout`、`pane.process_info`、`pane.neighbor`、`pane.edges`、`pane.focus_direction`、`pane.resize`、`pane.list`、`pane.current`、`pane.get`、`pane.rename`、`pane.send_text`、`pane.send_keys`、`pane.send_input`、`pane.read`、`pane.report_agent`、`pane.report_agent_session`、`pane.report_metadata`、`pane.clear_agent_authority`、`pane.release_agent`、`pane.close`、`pane.wait_for_output` |
 | 弹窗 | `popup.close` |
+| 区域 | `region.open`、`region.close`、`region.focus`、`region.resize`、`region.show`、`region.hide`、`region.list` |
 | 布局 | `layout.export`、`layout.apply`、`layout.set_split_ratio` |
 | 智能体 | `agent.list`、`agent.get`、`agent.read`、`agent.explain`、`agent.send_keys`、`agent.prompt`、`agent.wait`、`agent.rename`、`agent.focus`、`agent.start` |
 | 事件 | `events.subscribe`、`events.wait` |
@@ -468,6 +469,12 @@ v1 没有 Herdr 管理的插件存储 API。`HERDR_PLUGIN_CONFIG_DIR` 和 `HERDR
 
 `plugin.pane.open` 要求已安装、已启用、平台兼容的插件,然后把请求的清单 `[[panes]]` 入口点作为 argv 支撑的终端窗格启动。清单窗格的 `placement` 默认为 `overlay`;请求的 `placement` 可以用 `overlay`、`popup`、`split`、`tab` 或 `zoomed` 覆盖清单。overlay 和 popup 使用活动平铺窗格作为启动上下文。弹窗终端是会话级模态界面,不会改变标签页布局;可选的 `width` 和 `height` 以终端单元格数或 `"80%"` 这样的百分比设置外层尺寸。省略时默认为终端大小的一半,过小的值会限制为弹窗最小尺寸。弹窗没有窗格 id,不属于任何 `pane.*` 或智能体 API,不会发出窗格生命周期事件,会把插件焦点上下文保留在底层平铺窗格上,也不会向其进程导出 `HERDR_PANE_ID`。弹窗启动返回 `ok`;`popup.close` 关闭活动弹窗,没有弹窗时返回 `popup_not_open`。split 和 zoomed 针对已有窗格,tab 可以针对工作区。split、tab、zoomed 和 overlay 打开后表现得像普通 Herdr 窗格,`plugin.pane.focus` 和 `plugin.pane.close` 仍可操作这些窗格。
 
+```json
+{"id":"req_region","method":"region.open","params":{"plugin_id":"example.board","entrypoint":"board","size":40,"env":{"HERDR_ROLE":"board"},"focus":false}}
+```
+
+`region.open` 把清单中的 `[[regions]]` 入口点作为终端条启动在清单指定的客户端边缘。它要求已安装、已启用、平台兼容的插件,并以 `region` 返回打开的区域。`size` 是以单元格计的宽度,会被限制在清单范围内。当 edge 和 scope 已有区域时返回 `region_slot_occupied`,`[ui.regions.<edge>].enabled` 为 false 时返回 `region_edge_disabled`,插件未声明该区域时返回 `plugin_region_not_found`。`region.close`、`region.focus`、`region.resize`、`region.show` 和 `region.hide` 接受 `region_id`;`region.resize` 还接受 `size`。未知 id 返回 `region_not_found`,聚焦隐藏区域返回 `region_hidden`。`region.list` 返回所有打开的区域。每个区域报告 `region_id`、`plugin_id`、`entrypoint`、`title`、`edge`、`scope`、`size`、`min_size`、`max_size`、`visible` 和 `focused`。区域从不出现在 `pane.*`、layout 或智能体 API 中。
+
 ## Socket 传输
 
 Herdr 在本地 socket 上使用换行分隔的 JSON。在 Unix 上,那个 socket 是 Unix 域 socket。在 Windows 上,是命名管道。
@@ -654,6 +661,8 @@ workspace 的 get/list 响应会公开生成的 `tokens` 映射,空间侧边栏�
 标签页事件订阅包括 `tab.created`、`tab.closed`、`tab.focused`、`tab.renamed` 和 `tab.moved`。`tab.moved` 包含被移动的 `tab_id`、`workspace_id`、请求的 `insert_index` 和该工作区更新后的有序 `tabs` 列表。
 窗格事件订阅包括 `pane.created`、`pane.updated`、`pane.closed`、`pane.focused`、`pane.moved`、`pane.exited`、`pane.agent_detected`、`pane.output_matched`、`pane.agent_status_changed` 和 `pane.scroll_changed`。`pane.focused` 也会上报任意连接到此服务器的客户端手动选择窗格的变化，不会移动其他客户端的视图，且载荷不包含客户端身份。重复选择已选中的窗格不会再次发出事件。终端标题变化可能发出 `pane.updated`,但如果原始标题只有旋转指示符发生变化且 `terminal_title_stripped` 不变,则不会发出。`pane.scroll_changed` 只针对一个 `pane_id`,每当 Herdr 观察到滚动快照变化时,都会发出 `pane_id`、`workspace_id` 和当前 `scroll` 指标。
 布局事件订阅包括 `layout.updated`。该事件携带一个标签页更新后的 `PaneLayoutSnapshot`。使用 `session.snapshot` 维护缓存的客户端应将该事件作为重新读取受影响布局的通知；延迟到达的载荷可能早于最新快照。
+
+区域事件订阅包括 `region.opened`、`region.closed`、`region.focused`、`region.resized` 和 `region.visibility_changed`。每个事件都包含受影响的 `region`。`region.closed` 还包含 `reason`(`requested`、`exited`、`plugin_disabled` 或 `plugin_removed`),进程自行结束时还包含带有进程 `code` 的 `exit` 对象。
 
 Worktree 事件订阅包括 `worktree.created`、`worktree.opened` 和 `worktree.removed`。Worktree 事件描述 Git 检出的生命周期。`worktree.created` 包含打开的 `workspace` 和创建的 `worktree`。`worktree.opened` 包含目标 `workspace`、打开的 `worktree` 和 `already_open`。`worktree.removed` 包含 `workspace_id`、被移除的 `worktree` 和 `forced`。
 
