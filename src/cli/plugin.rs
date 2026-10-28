@@ -1411,6 +1411,7 @@ mod tests {
             events: vec![],
             panes: vec![],
             link_handlers: vec![],
+            regions: vec![],
             source: PluginSourceInfo {
                 kind: PluginSourceKind::Github,
                 owner: Some(owner.to_string()),
