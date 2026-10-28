@@ -186,6 +186,7 @@ impl ClientShellState {
             return None;
         }
         let layout = self.layout(cols, rows);
+        self.pending_region_viewport = self.region_viewport(layout.region);
         if self.last_tab_bar_width != Some(layout.tab_bar.width) {
             self.last_tab_bar_width = Some(layout.tab_bar.width);
             self.reveal_focused_tab = true;
@@ -338,6 +339,7 @@ impl ClientShellState {
             self.hits.tab_scroll_left = Rect::default();
             self.hits.tab_scroll_right = Rect::default();
         }
+        self.render_region_border(&mut buffer, layout.region);
         let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[]);
         let mode_bar_cells = mode_bar.map(|bar| {
             let start = usize::from(bar.y) * usize::from(frame.width) + usize::from(bar.x);
@@ -345,6 +347,7 @@ impl ClientShellState {
         });
         blit_pane_surface(&mut frame, &surface.frame, layout.pane_surface);
         restore_mode_bar(&mut frame, mode_bar, mode_bar_cells.as_deref());
+        self.hits.region = self.blit_region(&mut frame, layout.region);
         let mut occlusion = crate::kitty_graphics::surface::Occlusion::default();
         let has_selection = self
             .selection
@@ -637,6 +640,7 @@ impl ClientShellState {
             self.hits.panes.clear();
             self.hits.pane_splits.clear();
             self.hits.popup = None;
+            self.hits.region = None;
         }
         restore_mode_bar(&mut frame, mode_bar, mode_bar_cells.as_deref());
         if let Some(bar) = mode_bar {
@@ -719,6 +723,7 @@ impl ClientShellState {
             self.hits.panes.clear();
             self.hits.pane_splits.clear();
             self.hits.popup = None;
+            self.hits.region = None;
         }
         let graphics = self.compose_graphics(layout, &occlusion);
         Some(crate::client::frame_output::ComposedFrame { frame, graphics })
