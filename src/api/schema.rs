@@ -149,10 +149,10 @@ operations::define_operations! {
     PluginPaneClose(PluginPaneCloseParams) => "plugin.pane.close", true, false;
     RegionOpen(RegionOpenParams) => "region.open", true, false;
     RegionClose(RegionTarget) => "region.close", true, false;
-    RegionFocus(RegionTarget) => "region.focus", true, false;
-    RegionResize(RegionResizeParams) => "region.resize", true, false;
-    RegionShow(RegionTarget) => "region.show", true, false;
-    RegionHide(RegionTarget) => "region.hide", true, false;
+    RegionFocus(RegionTarget) => "region.focus", true, true;
+    RegionResize(RegionResizeParams) => "region.resize", true, true;
+    RegionShow(RegionTarget) => "region.show", true, true;
+    RegionHide(RegionTarget) => "region.hide", true, true;
     RegionList(EmptyParams) => "region.list", false, false;
 }
 
