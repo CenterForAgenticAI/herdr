@@ -71,6 +71,9 @@ pub struct InstalledPluginInfo {
     pub panes: Vec<PluginManifestPane>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_handlers: Vec<PluginManifestLinkHandler>,
+    /// Desktop regions the plugin declares in `[[regions]]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<PluginManifestRegion>,
     #[serde(default)]
     pub source: PluginSourceInfo,
     /// Warnings collected at link time or on registry load (e.g. unknown event names,
@@ -287,6 +290,30 @@ pub struct PluginManifestPane {
     pub width: Option<PopupSize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<PopupSize>,
+    pub command: Vec<String>,
+}
+
+/// A desktop region declared by a plugin manifest: a strip at one frame edge that hosts
+/// one terminal outside every tab's pane tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginManifestRegion {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<PluginPlatform>>,
+    #[serde(default)]
+    pub edge: crate::region::RegionEdge,
+    #[serde(default)]
+    pub scope: crate::region::RegionScope,
+    /// Default width in cells. The server clamps it to the region's bounds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u16>,
     pub command: Vec<String>,
 }
 
