@@ -8,6 +8,7 @@ pub mod integrations;
 pub(crate) mod operations;
 pub mod panes;
 pub mod plugins;
+pub mod regions;
 pub mod response;
 pub mod server;
 pub mod session;
@@ -22,6 +23,7 @@ pub use events::*;
 pub use integrations::*;
 pub use panes::*;
 pub use plugins::*;
+pub use regions::*;
 pub use response::*;
 pub use server::*;
 pub use session::*;
@@ -145,6 +147,13 @@ operations::define_operations! {
     PluginPaneOpen(PluginPaneOpenParams) => "plugin.pane.open", true, false;
     PluginPaneFocus(PluginPaneFocusParams) => "plugin.pane.focus", true, false;
     PluginPaneClose(PluginPaneCloseParams) => "plugin.pane.close", true, false;
+    RegionOpen(RegionOpenParams) => "region.open", true, false;
+    RegionClose(RegionTarget) => "region.close", true, false;
+    RegionFocus(RegionTarget) => "region.focus", true, false;
+    RegionResize(RegionResizeParams) => "region.resize", true, false;
+    RegionShow(RegionTarget) => "region.show", true, false;
+    RegionHide(RegionTarget) => "region.hide", true, false;
+    RegionList(EmptyParams) => "region.list", false, false;
 }
 
 #[cfg(test)]
