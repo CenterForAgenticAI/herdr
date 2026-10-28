@@ -426,6 +426,10 @@ impl App {
         let session_writer = Arc::new(std::sync::Mutex::new(crate::persist::SessionWriter::new(
             policy.restore_session && snapshot.is_none(),
         )));
+        let restored_regions = snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.regions.clone())
+            .unwrap_or_default();
         let (workspaces, active, selected) = if let Some(snap) = snapshot {
             let history = config
                 .experimental
@@ -698,6 +702,7 @@ impl App {
         app.configure_tab_bar_status(&config.ui.tab_bar_right, &config.ui.tab_bar_right_separator);
         app.configure_window_title(&config.ui.window_title);
         app.refresh_restored_workspace_git_metadata();
+        app.restore_regions(&restored_regions);
         Ok(app)
     }
 
@@ -761,6 +766,7 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
         app.refresh_restored_workspace_git_metadata();
+        app.restore_regions(&snapshot.regions);
         Ok(app)
     }
 

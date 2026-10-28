@@ -23,25 +23,52 @@ impl App {
         let Some(plugin_id) = normalize_plugin_id(&params.plugin_id) else {
             return invalid_plugin_id(id);
         };
-        let Some(plugin) = self.state.installed_plugins.get(&plugin_id).cloned() else {
-            return encode_error(id, "plugin_not_found", "plugin not found");
+        let launch = match self.resolve_region_launch(
+            &plugin_id,
+            &params.entrypoint,
+            params.env,
+            params.size,
+            params.focus,
+        ) {
+            Ok(launch) => launch,
+            Err((code, message)) => return encode_error(id, &code, message),
+        };
+        match self.open_region(launch) {
+            Ok(region) => encode_success(id, ResponseResult::RegionInfo { region }),
+            Err(err) => encode_error(id, err.code(), err.message()),
+        }
+    }
+
+    /// Build a region launch from the plugin's own manifest. Refuses plugins that are
+    /// missing, unavailable or disabled, and entrypoints the manifest does not declare.
+    pub(crate) fn resolve_region_launch(
+        &self,
+        plugin_id: &str,
+        entrypoint: &str,
+        env: std::collections::HashMap<String, String>,
+        requested_size: Option<u32>,
+        focus: bool,
+    ) -> Result<RegionLaunch, (String, String)> {
+        let Some(plugin) = self.state.installed_plugins.get(plugin_id).cloned() else {
+            return Err(("plugin_not_found".into(), "plugin not found".into()));
         };
         if !plugin_manifest_available(&plugin) {
-            return encode_error(
-                id,
-                "plugin_manifest_unavailable",
+            return Err((
+                "plugin_manifest_unavailable".into(),
                 format!("plugin {plugin_id} manifest is unavailable"),
-            );
+            ));
         }
         if !plugin.enabled {
-            return encode_error(
-                id,
-                "plugin_disabled",
+            return Err((
+                "plugin_disabled".into(),
                 format!("plugin {plugin_id} is disabled"),
-            );
+            ));
         }
-        let Some(entrypoint) = normalize_action_id(&params.entrypoint) else {
-            return encode_error(id, "invalid_plugin_entrypoint", "invalid entrypoint id");
+        let Some(entrypoint) = normalize_action_id(entrypoint) else {
+            return Err((
+                "invalid_plugin_entrypoint".into(),
+                "invalid entrypoint id".into(),
+            ));
         };
         let Some(region) = plugin
             .regions
@@ -49,20 +76,21 @@ impl App {
             .find(|region| region.id == entrypoint)
             .cloned()
         else {
-            return encode_error(
-                id,
-                "plugin_region_not_found",
+            return Err((
+                "plugin_region_not_found".into(),
                 format!("plugin region entrypoint '{entrypoint}' not found"),
-            );
+            ));
         };
-        if let Err((code, message)) = ensure_platform_supported(
+        ensure_platform_supported(
             effective_platforms(&region.platforms, &plugin.platforms),
             "plugin region",
-        ) {
-            return encode_error(id, code, message);
-        }
+        )
+        .map_err(|(code, message)| (code.to_string(), message))?;
         let Some(program) = region.command.first() else {
-            return encode_error(id, "invalid_plugin_manifest", "region command is empty");
+            return Err((
+                "invalid_plugin_manifest".into(),
+                "region command is empty".into(),
+            ));
         };
         let mut argv = region.command.clone();
         argv[0] = crate::plugin_command::program_for_cwd(
@@ -73,12 +101,8 @@ impl App {
         .to_string();
         let context = self.current_plugin_context("plugin-region");
         let cwd = self.plugin_pane_cwd(&plugin, None);
-        let env = match self.plugin_pane_launch_env(&plugin, &region.id, &cwd, params.env, &context)
-        {
-            Ok(env) => env,
-            Err((code, message)) => return encode_error(id, &code, message),
-        };
-        let launch = RegionLaunch {
+        let env = self.plugin_pane_launch_env(&plugin, &region.id, &cwd, env, &context)?;
+        Ok(RegionLaunch {
             plugin_id: plugin.plugin_id.clone(),
             plugin_name: plugin.name.clone(),
             entrypoint: region.id.clone(),
@@ -90,13 +114,9 @@ impl App {
             env,
             manifest_size: region.size,
             bounds: RegionSizeBounds::new(region.min_size, region.max_size),
-            requested_size: params.size,
-            focus: params.focus,
-        };
-        match self.open_region(launch) {
-            Ok(region) => encode_success(id, ResponseResult::RegionInfo { region }),
-            Err(err) => encode_error(id, err.code(), err.message()),
-        }
+            requested_size,
+            focus,
+        })
     }
 
     pub(in crate::app::api) fn handle_region_close(
@@ -900,6 +920,116 @@ command = ["sh", "-c", "sleep 30"]
             panic!("expected region list");
         };
         assert_eq!(regions, vec![region]);
+        cleanup(app, &[root]);
+    }
+
+    fn region_snapshot(
+        plugin_id: &str,
+        entrypoint: &str,
+        size: u16,
+        visible: bool,
+    ) -> crate::persist::RegionSnapshot {
+        crate::persist::RegionSnapshot {
+            plugin_id: plugin_id.into(),
+            entrypoint: entrypoint.into(),
+            edge: crate::region::RegionEdge::Right,
+            scope: crate::region::RegionScope::Session,
+            size,
+            visible,
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_respawns_regions_with_clamped_size_and_visibility_never_focused() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+
+        // The board manifest bounds sizes to 12..=60; 500 is a hostile hand-edited value.
+        app.restore_regions(&[region_snapshot(BOARD_PLUGIN, "board", 500, false)]);
+        app.state.assert_invariants_for_test();
+
+        let regions = app.state.region_infos();
+        assert_eq!(regions.len(), 1, "{regions:?}");
+        assert_eq!(regions[0].plugin_id, BOARD_PLUGIN);
+        assert_eq!(regions[0].entrypoint, "board");
+        assert_eq!(regions[0].size, 60);
+        assert!(!regions[0].visible);
+        assert!(!regions[0].focused);
+        assert!(app.state.region_focus.is_none());
+        let terminal = &app
+            .state
+            .regions
+            .get_by_id(&regions[0].region_id)
+            .expect("restored region")
+            .terminal_id;
+        assert!(app.terminal_runtimes.get(terminal).is_some());
+        cleanup(app, &[root]);
+    }
+
+    #[tokio::test]
+    async fn restore_drops_regions_whose_plugin_is_gone_disabled_or_undeclared() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+        request(
+            &mut app,
+            Method::PluginDisable(PluginSetEnabledParams {
+                plugin_id: BOARD_PLUGIN.into(),
+            }),
+        );
+        let runtimes_before = app.terminal_runtimes.len();
+
+        app.restore_regions(&[
+            region_snapshot(BOARD_PLUGIN, "board", 30, true),
+            region_snapshot("example.missing", "board", 30, true),
+        ]);
+        assert!(app.state.region_infos().is_empty());
+
+        request(
+            &mut app,
+            Method::PluginEnable(PluginSetEnabledParams {
+                plugin_id: BOARD_PLUGIN.into(),
+            }),
+        );
+        app.restore_regions(&[region_snapshot(BOARD_PLUGIN, "pane-only", 30, true)]);
+
+        assert!(app.state.region_infos().is_empty());
+        assert_eq!(app.terminal_runtimes.len(), runtimes_before);
+        app.state.assert_invariants_for_test();
+        cleanup(app, &[root]);
+    }
+
+    #[tokio::test]
+    async fn restore_keeps_only_the_first_region_for_a_slot() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+
+        app.restore_regions(&[
+            region_snapshot(BOARD_PLUGIN, "board", 20, true),
+            region_snapshot(BOARD_PLUGIN, "board", 50, true),
+        ]);
+
+        let regions = app.state.region_infos();
+        assert_eq!(regions.len(), 1, "{regions:?}");
+        assert_eq!(regions[0].size, 20);
+        app.state.assert_invariants_for_test();
+        cleanup(app, &[root]);
+    }
+
+    #[tokio::test]
+    async fn session_save_captures_open_regions() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+        let mut params = open_params(BOARD_PLUGIN, "board");
+        params.size = Some(25);
+        let region = open_board(&mut app, params);
+        request(&mut app, Method::RegionHide(target(&region.region_id)));
+
+        let snapshot = crate::persist::capture_regions(&app.state.regions);
+
+        assert_eq!(
+            snapshot,
+            vec![region_snapshot(BOARD_PLUGIN, "board", 25, false)]
+        );
         cleanup(app, &[root]);
     }
 }
