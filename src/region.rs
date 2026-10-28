@@ -219,6 +219,7 @@ impl RegionState {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.session.is_empty()
     }
@@ -249,6 +250,7 @@ impl RegionState {
     }
 
     /// Remove every region a plugin owns. Other plugins' regions stay.
+    #[cfg(test)]
     pub(crate) fn remove_by_plugin(&mut self, plugin_id: &str) -> Vec<RegionInstance> {
         let edges: Vec<RegionEdge> = self
             .session
@@ -275,6 +277,7 @@ impl RegionState {
     }
 
     /// Size the edge asks for, when a visible region occupies it.
+    #[cfg(test)]
     pub(crate) fn shown_size(&self, edge: RegionEdge) -> Option<u16> {
         self.session
             .get(&edge)
