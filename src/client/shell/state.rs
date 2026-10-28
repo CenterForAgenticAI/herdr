@@ -59,6 +59,8 @@ pub(super) struct ClientShellLayout {
     pub tab_bar: Rect,
     pub mobile_header: Rect,
     pub pane_surface: Rect,
+    /// Outer rect of the right desktop region, empty when none is drawn.
+    pub region: Rect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +94,7 @@ pub(super) struct ShellHitMap {
     pub(super) tabs: Vec<(Rect, String)>,
     pub(super) panes: Vec<PaneHit>,
     pub(super) popup: Option<PaneHit>,
+    pub(super) region: Option<super::regions::RegionHit>,
     pub(super) pane_splits: Vec<PaneSplitHit>,
     pub(super) agents: Vec<(Rect, String)>,
     pub(super) endpoint_agents: Vec<(Rect, ClientEndpointId, String)>,
@@ -188,6 +191,12 @@ pub(super) struct ClientTabPress {
 
 pub(super) enum ClientChromeDrag {
     SidebarWidth,
+    /// Dragging the left border of a desktop region. The right edge stays put.
+    RegionBorder {
+        region_id: String,
+        right_edge: u16,
+        last_sent: Option<u16>,
+    },
     SidebarSection,
     WorkspaceScrollbar {
         grab_row_offset: u16,
@@ -895,6 +904,11 @@ pub(crate) struct ClientShellState {
     pub(super) last_composed_size: Option<(u16, u16)>,
     pub(super) last_composed_at: Option<std::time::Instant>,
     pub(super) selection_repaint_deadline: Option<std::time::Instant>,
+    /// Region viewport measured by the last compose, waiting to be sent.
+    pub(super) pending_region_viewport: Option<(
+        ClientEndpointId,
+        crate::protocol::region_surface::RegionViewport,
+    )>,
     pub(super) hits: ShellHitMap,
     pub(super) endpoints: Vec<ClientShellEndpoint>,
     pub(super) active_endpoint_id: ClientEndpointId,
@@ -1069,6 +1083,7 @@ impl ClientShellState {
             last_composed_size: None,
             last_composed_at: None,
             selection_repaint_deadline: None,
+            pending_region_viewport: None,
             hits: ShellHitMap::default(),
             endpoints: vec![local_endpoint()],
             active_endpoint_id: ClientEndpointId::Local,
@@ -1225,6 +1240,7 @@ impl ClientShellState {
             self.sidebar_collapsed,
             self.focused_tab_count(),
             self.sidebar_width,
+            self.right_region_request(),
         )
     }
 
