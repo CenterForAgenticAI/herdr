@@ -15,6 +15,7 @@ use super::plugins::{
     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
     PluginPaneInfo,
 };
+use super::regions::{RegionCloseReason, RegionInfo};
 use super::server::ServerCapabilities;
 use super::session::SessionSnapshot;
 use super::tabs::TabInfo;
@@ -278,6 +279,16 @@ pub enum ResponseResult {
         projection_revision: u64,
     },
     Ok {},
+    RegionInfo {
+        region: RegionInfo,
+    },
+    RegionClosed {
+        region_id: String,
+        reason: RegionCloseReason,
+    },
+    RegionList {
+        regions: Vec<RegionInfo>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

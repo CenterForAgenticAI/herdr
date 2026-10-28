@@ -875,6 +875,15 @@ pub struct AppState {
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
     /// Session-modal terminal popup. This is intentionally outside workspace layouts.
     pub(crate) popup_pane: Option<PopupPaneState>,
+    /// Plugin-declared desktop regions. Outside every workspace layout, like the popup.
+    pub(crate) regions: crate::region::RegionState,
+    /// Region that owns keyboard focus. Exclusive with pane focus: while set, input goes to
+    /// the region terminal and no pane counts as focused for input.
+    pub(crate) region_focus: Option<crate::region::RegionId>,
+    /// Pane focus at the moment the region took focus. Any pane focus change clears
+    /// `region_focus`.
+    pub(crate) region_focus_anchor: Option<PaneFocusTarget>,
+    pub(crate) regions_config: crate::config::RegionsConfig,
     /// Recent plugin action/event command executions.
     pub(crate) plugin_command_logs: Vec<crate::api::schema::PluginCommandLogInfo>,
     pub(crate) next_plugin_command_log_id: u64,
@@ -1113,6 +1122,10 @@ impl AppState {
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             popup_pane: None,
+            regions: crate::region::RegionState::default(),
+            region_focus: None,
+            region_focus_anchor: None,
+            regions_config: crate::config::RegionsConfig::default(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
@@ -1188,6 +1201,7 @@ impl AppState {
                     "empty app state must not keep pane-targeted toast"
                 );
             }
+            self.assert_region_invariants_for_test(&std::collections::HashSet::new());
             return;
         }
 
@@ -1302,6 +1316,48 @@ impl AppState {
         }
         for &pane_id in self.plugin_panes.keys() {
             assert_live_pane(pane_id, "plugin pane record");
+        }
+        self.assert_region_invariants_for_test(&attached_terminal_ids);
+    }
+
+    fn assert_region_invariants_for_test(
+        &self,
+        attached_terminal_ids: &std::collections::HashSet<crate::terminal::TerminalId>,
+    ) {
+        for region in self.regions.iter() {
+            assert!(
+                self.terminals.contains_key(&region.terminal_id),
+                "region {} references missing terminal {}",
+                region.region_id,
+                region.terminal_id
+            );
+            assert!(
+                !attached_terminal_ids.contains(&region.terminal_id),
+                "region terminal {} must not be attached to a tiled pane",
+                region.terminal_id
+            );
+            assert!(
+                self.popup_pane
+                    .as_ref()
+                    .is_none_or(|popup| popup.terminal_id != region.terminal_id),
+                "region terminal {} must not be the popup terminal",
+                region.terminal_id
+            );
+            assert!(
+                region.bounds.min() <= region.size && region.size <= region.bounds.max(),
+                "region {} size {} outside bounds {}..={}",
+                region.region_id,
+                region.size,
+                region.bounds.min(),
+                region.bounds.max()
+            );
+        }
+        if let Some(focus) = &self.region_focus {
+            let region = self.regions.get_by_id(focus.as_str());
+            assert!(
+                region.is_some_and(|region| region.visible),
+                "region focus {focus} must name a live, visible region"
+            );
         }
     }
 

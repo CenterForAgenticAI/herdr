@@ -2,6 +2,7 @@ mod context;
 mod env;
 mod manifest;
 mod panes;
+mod regions;
 mod runtime;
 
 use super::responses::{encode_error, encode_success};
@@ -131,6 +132,10 @@ impl App {
                 .plugin_panes
                 .retain(|_, record| record.plugin_id != plugin_id);
             self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
+            self.close_plugin_regions(
+                &plugin_id,
+                crate::api::schema::RegionCloseReason::PluginRemoved,
+            );
         }
         encode_success(id, ResponseResult::PluginUnlinked { plugin_id, removed })
     }
@@ -735,6 +740,10 @@ impl App {
         };
         if !enabled {
             self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
+            self.close_plugin_regions(
+                &plugin_id,
+                crate::api::schema::RegionCloseReason::PluginDisabled,
+            );
         }
         if enabled {
             encode_success(id, ResponseResult::PluginEnabled { plugin })
