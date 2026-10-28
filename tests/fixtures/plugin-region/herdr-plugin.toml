@@ -1,0 +1,15 @@
+id = "example.region"
+name = "Region Fixture"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Tiny shell-script region used by integration tests"
+platforms = ["linux", "macos"]
+
+[[regions]]
+id = "board"
+title = "Region board"
+edge = "right"
+size = 30
+min_size = 12
+max_size = 60
+command = ["sh", "region.sh"]
