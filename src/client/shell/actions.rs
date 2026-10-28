@@ -19,6 +19,12 @@ impl ClientShellState {
                 outcome.resize = true;
                 self.persist_chrome_preferences(outcome);
             }
+            crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleRegion) => {
+                self.toggle_region(outcome);
+            }
+            crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusRegion) => {
+                self.focus_region(outcome);
+            }
             crate::input::KeybindMatch::Action(action) => {
                 if self.workspace_preview_action_blocked()
                     && matches!(
