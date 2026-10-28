@@ -331,8 +331,11 @@ impl App {
         let pane = ws.pane_state(pane_id)?;
         let terminal = self.state.terminals.get(&pane.attached_terminal_id)?;
         let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
+        // Region focus and pane focus are exclusive: while a region holds keyboard focus,
+        // no pane reports itself focused.
         let focused = self.state.active == Some(ws_idx)
             && ws.active_tab == tab_idx
+            && self.state.effective_region_focus().is_none()
             && ws
                 .focused_pane_id()
                 .is_some_and(|focused| focused == pane_id);
