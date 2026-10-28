@@ -191,9 +191,10 @@ fn region_not_found(id: String, region_id: &str) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use crate::api::schema::{
-        EventData, EventKind, Method, PaneListParams, PaneTarget, PluginLinkParams,
-        PluginSetEnabledParams, PluginUnlinkParams, RegionCloseReason, RegionOpenParams,
-        RegionResizeParams, RegionTarget, Request, ResponseResult, SuccessResponse,
+        EmptyParams, EventData, EventKind, LayoutExportParams, Method, PaneLayoutParams,
+        PaneListParams, PaneTarget, PluginLinkParams, PluginSetEnabledParams, PluginUnlinkParams,
+        RegionCloseReason, RegionOpenParams, RegionResizeParams, RegionTarget, Request,
+        ResponseResult, SuccessResponse,
     };
     use crate::app::App;
     use std::collections::HashMap;
@@ -739,6 +740,24 @@ command = ["sh", "-c", "sleep 30"]
             panes.iter().all(|pane| !pane.focused),
             "no pane is focused while a region holds focus"
         );
+
+        // Every other listing of panes, layouts and agents must not mention the region.
+        for method in [
+            Method::SessionSnapshot(EmptyParams::default()),
+            Method::AgentList(EmptyParams::default()),
+            Method::PaneLayout(PaneLayoutParams::default()),
+            Method::LayoutExport(LayoutExportParams {
+                tab_id: None,
+                pane_id: None,
+            }),
+        ] {
+            let response = request(&mut app, method);
+            success(&response);
+            assert!(
+                !response.contains(&region_terminal) && !response.contains(&region.region_id),
+                "region leaked into {response}"
+            );
+        }
         cleanup(app, &[root]);
     }
 
