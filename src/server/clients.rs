@@ -47,6 +47,38 @@ fn client_shell_key_press_id(
     )
 }
 
+/// What one region-capable shell was last sent, and the viewports it reported.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ClientRegionStream {
+    pub(crate) projection_revision: u64,
+    pub(crate) sent_projection: Option<SentRegionProjection>,
+    pub(crate) sent_frames: HashMap<String, RegionFrameKey>,
+    pub(crate) viewports: HashMap<String, RegionViewportReport>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SentRegionProjection {
+    pub(crate) regions: Vec<crate::protocol::region_surface::ClientRegion>,
+    pub(crate) focused: Option<String>,
+}
+
+/// Identity of the region frame a client holds. A frame is resent when any part changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegionFrameKey {
+    pub(crate) surface_revision: u64,
+    pub(crate) content_seq: u64,
+    pub(crate) size: (u16, u16),
+    pub(crate) scroll_offset: usize,
+}
+
+/// Inner region size one client draws, with the activity stamp of the report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegionViewportReport {
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+    pub(crate) stamp: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClientShellHeldInput {
     pub(crate) target: ClientShellInputTarget,
@@ -192,6 +224,8 @@ pub(crate) struct ClientConnection {
     pub(crate) shell_deferred_navigation_response: Option<Vec<u8>>,
     /// Whether this shell uses the endpoint-owned keymap rather than a client-owned keymap.
     pub(crate) shell_uses_endpoint_keybindings: bool,
+    /// Desktop region delivery state; `None` for a shell that did not opt into regions.
+    pub(crate) shell_regions: Option<ClientRegionStream>,
     /// Channels for sending framed ServerMessage data to the client writer thread.
     pub(crate) writer: Option<ClientWriter>,
 }
@@ -255,6 +289,7 @@ impl ClientConnection {
             shell_deferred_navigation_request_id: None,
             shell_deferred_navigation_response: None,
             shell_uses_endpoint_keybindings: false,
+            shell_regions: None,
             writer,
         }
     }
