@@ -91,6 +91,13 @@ title = "Project board"
 placement = "overlay"
 command = ["herdr-board"]
 
+[[regions]]
+id = "board"
+title = "Project board"
+edge = "right"
+size = 40
+command = ["herdr-board", "--compact"]
+
 [[link_handlers]]
 id = "github-issue"
 title = "Open GitHub issue"
@@ -105,14 +112,14 @@ or install a plugin when its minimum version is newer than the current binary.
 `description` is optional. Plugin ids may use ASCII letters, digits, dot,
 colon, underscore, and hyphen.
 
-Action ids, pane ids, and link handler ids are local ids inside the plugin.
+Action ids, pane ids, region ids, and link handler ids are local ids inside the plugin.
 They may use ASCII letters, digits, colon, underscore, and hyphen, but not
 dots. Each id type must be unique inside a plugin. Herdr qualifies action ids
 as `plugin.id.action` when it needs a globally unique name.
 
 Use `platforms = ["linux", "macos", "windows"]` to declare where the plugin
-can run. Build commands, startup hooks, actions, event hooks, panes, and link
-handlers can also declare their own `platforms`; item-level platforms override
+can run. Build commands, startup hooks, actions, event hooks, panes, regions, and
+link handlers can also declare their own `platforms`; item-level platforms override
 the top-level list. Local plugins without top-level `platforms` link with a
 warning.
 
@@ -340,7 +347,55 @@ modal is active, and `plugin.pane.open` returns an `ok` result after launch.
 On Windows, build commands, action commands, and event commands resolve common
 `PATHEXT` shims such as `npm.cmd`, `bun.cmd`, and `pnpm.cmd` when the bare
 command is on `PATH`. Pane commands use Herdr's normal Windows pane launcher and
-must still be valid Windows argv commands.
+## Regions
+
+A region is a terminal strip on one edge of the client window, outside every
+tab. It stays in place when you switch tabs or workspaces, and new tabs open
+beside it. Declare a region in the manifest:
+
+```toml
+[[regions]]
+id = "board"
+title = "Project board"
+edge = "right"
+scope = "session"
+size = 40
+min_size = 24
+max_size = 80
+command = ["herdr-board", "--compact"]
+```
+
+`id`, `title`, and `command` are required. `edge` supports only `right` and
+`scope` supports only `session`; both are the defaults. `size`, `min_size`,
+and `max_size` are widths in cells and default to 32, 8, and 200. A plugin may
+declare each `(edge, scope)` slot once.
+
+Open a region with `herdr region open PLUGIN_ID ENTRYPOINT` or the
+`region.open` socket method. Each slot holds one region at a time; opening a
+second one returns `region_slot_occupied`. Requested sizes are clamped to the
+manifest bounds. When the window is too narrow to keep at least 20 columns for
+the tab area beside the region, Herdr leaves the region out of that frame
+without stopping it, and draws it again once the window is wide enough.
+
+A region is not a Herdr pane. It has a `region_id` instead of a pane ID, does
+not appear in `pane.*`, layout, or agent APIs, and its process does not receive
+`HERDR_PANE_ID`. It gets the other plugin variables, including
+`HERDR_PLUGIN_ID`, `HERDR_PLUGIN_ENTRYPOINT_ID`, and
+`HERDR_PLUGIN_CONTEXT_JSON`. Hiding a region keeps
+its process running. When the process exits, the region closes; when the plugin
+is disabled or unlinked, Herdr closes its regions and stops their processes.
+
+Herdr saves open regions with the session and starts them again on restore.
+Only the plugin id, entrypoint, edge, scope, width, and visibility are saved;
+the region's terminal contents are not. A restored region never takes focus,
+and Herdr skips it when the plugin is missing, disabled, or no longer declares
+the region.
+
+Users can turn off an edge or set its width with `[ui.regions.right]` in
+`config.toml`, and bind `keys.toggle_region` and `keys.focus_region` to show,
+hide, and focus the right region from the keyboard. Both bindings are unset by
+default. With the mouse, click a region to focus it and drag its inner border
+to resize it.
 
 ## Keybindings
 

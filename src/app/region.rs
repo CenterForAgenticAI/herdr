@@ -537,6 +537,58 @@ impl App {
     }
 }
 
+impl App {
+    /// Reopen regions recorded in a session snapshot. Each one respawns from its plugin's
+    /// current manifest, so a plugin that is gone, disabled or no longer declares the
+    /// entrypoint drops its region. Restored regions keep their size (clamped to the current
+    /// bounds) and visibility, and are never focused.
+    pub(crate) fn restore_regions(&mut self, snapshots: &[crate::persist::RegionSnapshot]) {
+        for snapshot in snapshots {
+            let launch = match self.resolve_region_launch(
+                &snapshot.plugin_id,
+                &snapshot.entrypoint,
+                std::collections::HashMap::new(),
+                Some(u32::from(snapshot.size)),
+                false,
+            ) {
+                Ok(launch) => launch,
+                Err((code, message)) => {
+                    tracing::debug!(
+                        plugin = %snapshot.plugin_id,
+                        entrypoint = %snapshot.entrypoint,
+                        code = %code,
+                        message = %message,
+                        "dropping restored region"
+                    );
+                    continue;
+                }
+            };
+            if launch.edge != snapshot.edge || launch.scope != snapshot.scope {
+                tracing::debug!(
+                    plugin = %snapshot.plugin_id,
+                    entrypoint = %snapshot.entrypoint,
+                    "dropping restored region: manifest moved it to another slot"
+                );
+                continue;
+            }
+            match self.open_region(launch) {
+                Ok(info) => {
+                    if let Some(region) = self.state.regions.get_mut_by_id(&info.region_id) {
+                        region.visible = snapshot.visible;
+                    }
+                }
+                Err(err) => tracing::debug!(
+                    plugin = %snapshot.plugin_id,
+                    entrypoint = %snapshot.entrypoint,
+                    code = err.code(),
+                    "dropping restored region"
+                ),
+            }
+        }
+        self.state.reconcile_region_focus();
+    }
+}
+
 #[cfg(test)]
 impl App {
     /// Install a region backed by a test runtime, without spawning a process.
