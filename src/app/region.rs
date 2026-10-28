@@ -151,6 +151,7 @@ impl AppState {
     }
 
     /// Terminal that receives input while a region holds focus.
+    #[cfg(test)]
     pub(crate) fn focused_region_terminal(&self) -> Option<&TerminalId> {
         let focus = self.effective_region_focus()?;
         self.regions
