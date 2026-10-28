@@ -389,7 +389,9 @@ Herdr saves open regions with the session and starts them again on restore.
 Only the plugin id, entrypoint, edge, scope, width, and visibility are saved;
 the region's terminal contents are not. A restored region never takes focus,
 and Herdr skips it when the plugin is missing, disabled, or no longer declares
-the region.
+the region. A live handoff (`herdr update --handoff`) does not transfer a
+region's process: the new server starts the region again from the same saved
+fields, so the region's program restarts.
 
 Users can turn off an edge or set its width with `[ui.regions.right]` in
 `config.toml`, and bind `keys.toggle_region` and `keys.focus_region` to show,
