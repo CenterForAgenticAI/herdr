@@ -134,6 +134,7 @@ impl App {
             return tab_not_found(id, &target.tab_id);
         };
         self.state.switch_workspace_tab(ws_idx, tab_idx);
+        self.state.clear_region_focus();
         let tab = self.tab_info(ws_idx, tab_idx).unwrap();
 
         encode_success(id, ResponseResult::TabInfo { tab })
