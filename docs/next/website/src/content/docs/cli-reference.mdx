@@ -534,6 +534,24 @@ terminal size, and values smaller than the popup minimum are clamped. A popup
 is not a Herdr pane, does not export `HERDR_PANE_ID`, and does not participate
 in pane or agent APIs. Native non-terminal plugin panes are outside plugin v1.
 
+Plugin regions:
+
+```bash
+herdr region open PLUGIN_ID ENTRYPOINT [--size CELLS] [--focus] [--env KEY=VALUE]
+herdr region close REGION_ID
+herdr region focus REGION_ID
+herdr region resize REGION_ID CELLS
+herdr region show REGION_ID
+herdr region hide REGION_ID
+herdr region list
+```
+
+`region open` starts a manifest-declared `[[regions]]` command as a terminal
+strip on the right edge of the client window, outside every tab. Sizes are
+widths in cells and are clamped to the region's bounds. `region hide` keeps the
+process running; `region close` stops it. A region is not a Herdr pane and does
+not appear in pane or agent commands.
+
 New panes identify as `TERM_PROGRAM=herdr`, with `TERM_PROGRAM_VERSION` set to
 Herdr's version. They keep `TERM=xterm-256color` and `COLORTERM=truecolor`.
 They also get `fish_handle_reflow=0`, because Herdr reflows text on resize;
