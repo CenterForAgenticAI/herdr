@@ -338,7 +338,9 @@ layout 或智能体 API 中,其进程不会收到 `HERDR_PANE_ID`。它会收到
 
 Herdr 会随会话保存打开的区域,并在恢复时重新启动它们。只保存插件 id、入口点、
 edge、scope、宽度和可见性,不保存区域的终端内容。恢复的区域不会获得焦点;
-当插件缺失、已禁用或不再声明该区域时,Herdr 会跳过它。
+当插件缺失、已禁用或不再声明该区域时,Herdr 会跳过它。实时交接
+(`herdr update --handoff`)不会转移区域的进程:新服务器根据相同的已保存字段重新启动
+区域,因此区域中的程序会重新启动。
 
 用户可以在 `config.toml` 的 `[ui.regions.right]` 中关闭某一侧或设置宽度,并绑定
 `keys.toggle_region` 和 `keys.focus_region`,用键盘显示、隐藏和聚焦右侧区域。
