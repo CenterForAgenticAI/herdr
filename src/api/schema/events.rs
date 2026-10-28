@@ -82,6 +82,16 @@ pub enum Subscription {
     PaneScrollChanged { pane_id: String },
     #[serde(rename = "layout.updated")]
     LayoutUpdated {},
+    #[serde(rename = "region.opened")]
+    RegionOpened {},
+    #[serde(rename = "region.closed")]
+    RegionClosed {},
+    #[serde(rename = "region.focused")]
+    RegionFocused {},
+    #[serde(rename = "region.resized")]
+    RegionResized {},
+    #[serde(rename = "region.visibility_changed")]
+    RegionVisibilityChanged {},
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -218,6 +228,11 @@ pub enum EventKind {
     PaneAgentDetected,
     PaneAgentStatusChanged,
     LayoutUpdated,
+    RegionOpened,
+    RegionClosed,
+    RegionFocused,
+    RegionResized,
+    RegionVisibilityChanged,
 }
 
 impl EventKind {
@@ -249,6 +264,11 @@ impl EventKind {
             EventKind::PaneAgentDetected => "pane.agent_detected",
             EventKind::PaneAgentStatusChanged => "pane.agent_status_changed",
             EventKind::LayoutUpdated => "layout.updated",
+            EventKind::RegionOpened => "region.opened",
+            EventKind::RegionClosed => "region.closed",
+            EventKind::RegionFocused => "region.focused",
+            EventKind::RegionResized => "region.resized",
+            EventKind::RegionVisibilityChanged => "region.visibility_changed",
         }
     }
 }
@@ -281,6 +301,11 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::PaneAgentDetected,
     EventKind::PaneAgentStatusChanged,
     EventKind::LayoutUpdated,
+    EventKind::RegionOpened,
+    EventKind::RegionClosed,
+    EventKind::RegionFocused,
+    EventKind::RegionResized,
+    EventKind::RegionVisibilityChanged,
 ];
 
 pub const PLUGIN_HOOK_EVENT_KINDS: &[EventKind] = &[
@@ -552,5 +577,23 @@ pub enum EventData {
     },
     LayoutUpdated {
         layout: super::panes::PaneLayoutSnapshot,
+    },
+    RegionOpened {
+        region: super::regions::RegionInfo,
+    },
+    RegionClosed {
+        region: super::regions::RegionInfo,
+        reason: super::regions::RegionCloseReason,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit: Option<super::regions::RegionExitInfo>,
+    },
+    RegionFocused {
+        region: super::regions::RegionInfo,
+    },
+    RegionResized {
+        region: super::regions::RegionInfo,
+    },
+    RegionVisibilityChanged {
+        region: super::regions::RegionInfo,
     },
 }
