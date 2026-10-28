@@ -594,6 +594,15 @@ impl TerminalRuntime {
         self.0.child_pid()
     }
 
+    pub(crate) fn child_exit_status(&self) -> Option<crate::pane::ChildExitStatus> {
+        self.0.child_exit_status()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_test_child_exit(&self, status: crate::pane::ChildExitStatus) {
+        self.0.record_test_child_exit(status);
+    }
+
     pub(crate) fn current_size(&self) -> (u16, u16) {
         self.0.current_size()
     }
