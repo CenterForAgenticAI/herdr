@@ -4,10 +4,12 @@ use std::time::{Duration, Instant};
 use ratatui::layout::{Direction, Rect};
 
 use crate::app::{App, AppPolicy};
+use crate::client::endpoint::ClientEndpointId;
 use crate::client::{ClientShellConfig, ClientShellState};
 use crate::config::Config;
 use crate::kitty_graphics::HostCellSize;
-use crate::protocol::PaneSurfaceFrame;
+use crate::protocol::region_surface::{ClientRegion, RegionProjection, RegionSurface};
+use crate::protocol::{FrameData, PaneSurfaceFrame};
 use crate::terminal::TerminalRuntime;
 use crate::workspace::Workspace;
 
@@ -16,6 +18,9 @@ const ROWS: u16 = 40;
 const SAMPLE_COUNT: usize = 40;
 const WARMUP_COUNT: usize = 5;
 const CARDINALITIES: [usize; 3] = [1, 15, 50];
+const REGION_SIZE: u16 = 32;
+const REGION_ID: &str = "region_bench";
+const REGION_TERMINAL: &str = "terminal-region-bench";
 
 #[derive(Clone, Copy)]
 struct StageStats {
@@ -34,6 +39,7 @@ struct RenderPipeline {
     app: App,
     client: ClientShellState,
     graphics_delivery: crate::kitty_graphics::surface::DeliveryCache,
+    region: Option<TerminalRuntime>,
 }
 
 impl RenderPipeline {
@@ -68,7 +74,63 @@ impl RenderPipeline {
             app,
             client,
             graphics_delivery: crate::kitty_graphics::surface::DeliveryCache::default(),
+            region: None,
         }
+    }
+
+    /// Opens one visible right region, as a plugin region would appear on screen.
+    fn with_region(workspaces: Vec<Workspace>) -> Self {
+        let mut pipeline = Self::new(workspaces);
+        let local = ClientEndpointId::Local;
+        pipeline.client.set_endpoint_regions_supported(&local, true);
+        pipeline.client.set_endpoint_region_projection(
+            &local,
+            RegionProjection {
+                boot_id: "bench-boot".into(),
+                revision: 1,
+                regions: vec![ClientRegion {
+                    region_id: REGION_ID.into(),
+                    terminal_id: REGION_TERMINAL.into(),
+                    plugin_id: "bench".into(),
+                    entrypoint: "bench".into(),
+                    title: "bench".into(),
+                    edge: "right".into(),
+                    scope: "session".into(),
+                    size: REGION_SIZE,
+                    min_size: 8,
+                    max_size: 200,
+                    visible: true,
+                    focused: false,
+                    mouse_reporting: false,
+                }],
+                focused: None,
+            },
+        );
+        pipeline.region = Some(TerminalRuntime::test_with_scrollback_bytes(
+            REGION_SIZE,
+            ROWS,
+            1024 * 1024,
+            history().as_bytes(),
+        ));
+        assert!(
+            pipeline.client.surface_size(COLS, ROWS).cols <= COLS - REGION_SIZE,
+            "benchmark region must take columns from the pane surface"
+        );
+        pipeline
+    }
+
+    /// Server work for one region frame, matching `stream_region_surfaces`.
+    fn render_region(&self) -> Option<RegionSurface> {
+        let runtime = self.region.as_ref()?;
+        let (rows, cols) = runtime.current_size();
+        let area = Rect::new(0, 0, cols, rows);
+        let (buffer, cursor) = crate::server::render_stream::render_terminal_virtual(runtime, area);
+        let hyperlinks = runtime.visible_hyperlinks(area);
+        Some(RegionSurface {
+            region_id: REGION_ID.into(),
+            terminal_id: REGION_TERMINAL.into(),
+            frame: FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, cursor, &hyperlinks),
+        })
     }
 
     fn render_once(&mut self) -> (Duration, Duration) {
@@ -96,6 +158,7 @@ impl RenderPipeline {
             1,
         )
         .expect("benchmark surface");
+        let region = self.render_region();
         let server_elapsed = started.elapsed();
         self.graphics_delivery = rendered.graphics_delivery;
 
@@ -110,6 +173,10 @@ impl RenderPipeline {
             popup: rendered.popup,
             graphics: rendered.graphics,
         });
+        if let Some(region) = region {
+            self.client
+                .set_endpoint_region_surface(&ClientEndpointId::Local, region);
+        }
         black_box(
             self.client
                 .compose(COLS, ROWS)
@@ -177,6 +244,10 @@ fn profile(build: fn(usize) -> Vec<Workspace>, count: usize) -> PipelineStats {
     profile_pipeline(RenderPipeline::new(build(count)))
 }
 
+fn profile_with_region(build: fn(usize) -> Vec<Workspace>, count: usize) -> PipelineStats {
+    profile_pipeline(RenderPipeline::with_region(build(count)))
+}
+
 fn profile_pipeline(mut pipeline: RenderPipeline) -> PipelineStats {
     for _ in 0..WARMUP_COUNT {
         black_box(pipeline.render_once());
@@ -221,7 +292,20 @@ fn print_stage(
 }
 
 fn print_profiles(label: &str, build: fn(usize) -> Vec<Workspace>) {
-    let rows = CARDINALITIES.map(|count| (count, profile(build, count)));
+    print_pipeline_rows(
+        label,
+        CARDINALITIES.map(|count| (count, profile(build, count))),
+    );
+}
+
+fn print_region_profiles(label: &str, build: fn(usize) -> Vec<Workspace>) {
+    print_pipeline_rows(
+        label,
+        CARDINALITIES.map(|count| (count, profile_with_region(build, count))),
+    );
+}
+
+fn print_pipeline_rows(label: &str, rows: [(usize, PipelineStats); 3]) {
     println!("{label}");
     print_stage("server pane surface", &rows, |stats| stats.server);
     print_stage("client shell composition", &rows, |stats| stats.client);
@@ -607,8 +691,16 @@ fn print_surface_reuse_profiles() {
 #[ignore = "manual client-rendered pipeline scaling profile"]
 async fn render_scale_profile() {
     print_profiles("background workspaces (one pane each)", workspaces);
+    print_region_profiles(
+        "background workspaces (one pane each) with an open right region",
+        workspaces,
+    );
     print_snapshot_encoding_profiles("background workspaces", workspaces);
     print_profiles("active panes (one workspace)", active_panes);
+    print_region_profiles(
+        "active panes (one workspace) with an open right region",
+        active_panes,
+    );
     print_snapshot_encoding_profiles("active panes", active_panes);
     print_token_rule_profiles();
     print_surface_reuse_profiles();
