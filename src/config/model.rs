@@ -485,6 +485,10 @@ pub struct KeysConfig {
     pub resize_pane_right: BindingConfig,
     /// Toggle sidebar collapse. Default: "prefix+b"
     pub toggle_sidebar: BindingConfig,
+    /// Show or hide the right desktop region. Unset by default.
+    pub toggle_region: BindingConfig,
+    /// Focus the right desktop region, or return focus to the last pane. Unset by default.
+    pub focus_region: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
     /// Prefix-mode custom command bindings.
@@ -622,6 +626,10 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     toggle_sidebar: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    toggle_region: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focus_region: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
     #[serde(skip_serializing)]
     command: Option<Vec<CommandKeybindConfig>>,
@@ -733,6 +741,8 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(resize_pane_up);
         apply_field!(resize_pane_right);
         apply_field!(toggle_sidebar);
+        apply_field!(toggle_region);
+        apply_field!(focus_region);
         apply_field!(indexed);
         apply_field!(command);
 
@@ -838,6 +848,8 @@ impl KeysConfig {
         copy_effective_action_field!(resize_pane_up, keybinds.resize_pane_up);
         copy_effective_action_field!(resize_pane_right, keybinds.resize_pane_right);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
+        copy_effective_action_field!(toggle_region, keybinds.toggle_region);
+        copy_effective_action_field!(focus_region, keybinds.focus_region);
         copy_user_field!(indexed);
 
         profile
@@ -1212,6 +1224,8 @@ impl Default for KeysConfig {
             resize_pane_up: BindingConfig::empty(),
             resize_pane_right: BindingConfig::empty(),
             toggle_sidebar: BindingConfig::one("prefix+b"),
+            toggle_region: BindingConfig::empty(),
+            focus_region: BindingConfig::empty(),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
             user_fields: BTreeSet::new(),
