@@ -883,6 +883,13 @@ impl ClientShellState {
                         .popup
                         .as_ref()
                         .filter(|hit| hit.pane_id == gesture.hit.pane_id)
+                        .or_else(|| {
+                            self.hits
+                                .region
+                                .as_ref()
+                                .map(|region| &region.terminal)
+                                .filter(|hit| hit.pane_id == gesture.hit.pane_id)
+                        })
                         .cloned()
                 } else {
                     self.hits
@@ -1024,6 +1031,10 @@ impl ClientShellState {
             match self.chrome_drag.as_ref() {
                 Some(ClientChromeDrag::SidebarWidth) => {
                     self.set_sidebar_width_from_column(mouse.column, outcome);
+                    return;
+                }
+                Some(ClientChromeDrag::RegionBorder { .. }) => {
+                    self.drag_region_border(mouse.column, outcome);
                     return;
                 }
                 Some(ClientChromeDrag::SidebarSection) => {
@@ -1360,7 +1371,8 @@ impl ClientShellState {
                     ClientChromeDrag::SidebarWidth | ClientChromeDrag::SidebarSection => {
                         self.persist_chrome_preferences(outcome);
                     }
-                    ClientChromeDrag::WorkspaceScrollbar { .. }
+                    ClientChromeDrag::RegionBorder { .. }
+                    | ClientChromeDrag::WorkspaceScrollbar { .. }
                     | ClientChromeDrag::AgentScrollbar { .. }
                     | ClientChromeDrag::HelpScrollbar { .. }
                     | ClientChromeDrag::NavigatorScrollbar { .. }
@@ -1738,6 +1750,9 @@ impl ClientShellState {
             return;
         }
 
+        if self.handle_region_mouse(mouse, outcome) {
+            return;
+        }
         if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
             let selection_hit = self.active_selection_pane();
             if let Some(hit) = selection_hit {
@@ -2335,7 +2350,11 @@ impl ClientShellState {
         }
     }
 
-    fn pane_mouse_position(&self, hit: &PaneHit, mouse: MouseEvent) -> ClientMousePosition {
+    pub(super) fn pane_mouse_position(
+        &self,
+        hit: &PaneHit,
+        mouse: MouseEvent,
+    ) -> ClientMousePosition {
         let cell = ClientMousePosition::Cell {
             column: mouse.column.saturating_sub(hit.inner_rect.x),
             row: mouse.row.saturating_sub(hit.inner_rect.y),
