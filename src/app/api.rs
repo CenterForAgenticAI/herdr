@@ -217,6 +217,9 @@ impl App {
                 self.close_popup_pane();
                 return Vec::new();
             }
+            if self.handle_region_process_exit(*pane_id) {
+                return Vec::new();
+            }
             if worktree_restore_failed {
                 worktree_restore_updates
                     .extend(self.publish_worktree_runtime_agent_release(*pane_id));
@@ -1258,6 +1261,27 @@ impl App {
             }
             Method::PluginPaneClose(params) => {
                 return self.handle_plugin_pane_close(request.id, params);
+            }
+            Method::RegionOpen(params) => {
+                return self.handle_region_open(request.id, params);
+            }
+            Method::RegionClose(params) => {
+                return self.handle_region_close(request.id, params);
+            }
+            Method::RegionFocus(params) => {
+                return self.handle_region_focus(request.id, params);
+            }
+            Method::RegionResize(params) => {
+                return self.handle_region_resize(request.id, params);
+            }
+            Method::RegionShow(params) => {
+                return self.handle_region_set_visible(request.id, params, true);
+            }
+            Method::RegionHide(params) => {
+                return self.handle_region_set_visible(request.id, params, false);
+            }
+            Method::RegionList(_) => {
+                return self.handle_region_list(request.id);
             }
             _ => {
                 return responses::encode_error(

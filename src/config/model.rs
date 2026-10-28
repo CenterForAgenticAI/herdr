@@ -195,6 +195,36 @@ fn parse_right_click_passthrough_modifier(value: &str) -> Option<Option<KeyModif
     (!modifiers.is_empty()).then_some(Some(modifiers))
 }
 
+/// Desktop region settings, one table per edge.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct RegionsConfig {
+    /// Right-edge region settings.
+    pub right: RegionEdgeConfig,
+}
+
+/// Settings for the plugin region on one edge of the client frame.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct RegionEdgeConfig {
+    /// Allow plugins to open a region on this edge. When false, region.open fails with region_edge_disabled. Default: true.
+    pub enabled: bool,
+    /// Width in cells for regions opened on this edge. Overrides the manifest default; still clamped to the manifest bounds. Default: unset.
+    pub size: Option<u16>,
+    /// Open regions on this edge hidden. Show them with region.show or the toggle_region key. Default: false.
+    pub start_hidden: bool,
+}
+
+impl Default for RegionEdgeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            size: None,
+            start_hidden: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ToastConfig {
     pub delivery: ToastDelivery,
@@ -1005,6 +1035,8 @@ pub struct UiConfig {
     pub accent: String,
     /// Optional visual toast notifications for background workspace events.
     pub toast: ToastConfig,
+    /// Desktop regions: plugin terminals docked at an edge of the client frame.
+    pub regions: RegionsConfig,
     /// Play sounds when agents change state in background workspaces.
     pub sound: SoundConfig,
 }
@@ -1229,6 +1261,7 @@ impl Default for UiConfig {
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
+            regions: RegionsConfig::default(),
             sound: SoundConfig::default(),
         }
     }
