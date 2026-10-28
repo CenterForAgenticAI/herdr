@@ -479,6 +479,17 @@ Metadata reporters provide values only; styling stays in the local sidebar confi
 
 Sidebar row settings affect only the expanded desktop sidebar. Collapsed and mobile views keep their compact layouts.
 
+Plugins can dock a terminal at the right edge of the window, outside every tab (see [Regions](/docs/plugins/#regions)). `[ui.regions.right]` controls that edge:
+
+```toml
+[ui.regions.right]
+enabled = true       # false makes region.open fail with region_edge_disabled
+size = 40            # width in cells; still clamped to the plugin's min_size/max_size
+start_hidden = false # true opens regions hidden until shown
+```
+
+`size` is unset by default, so the plugin manifest's width applies. Bind `keys.toggle_region` and `keys.focus_region` to show, hide, and focus the region from the keyboard; both are unset by default.
+
 ## Notifications
 
 Herdr can notify you when a background agent finishes or needs input:
