@@ -1507,6 +1507,9 @@ pub struct PaneRuntime {
     persistence_cwd: Mutex<Option<std::path::PathBuf>>,
     cwd_process_exited: Arc<AtomicBool>,
     child_wait_completed: Option<Arc<AtomicBool>>,
+    /// Exit status the child-wait task recorded. Empty until the child exits, and always empty
+    /// for runtimes without a wait handle (imported handoff panes, tests).
+    child_exit_status: Arc<OnceLock<ChildExitStatus>>,
     kitty_keyboard_flags: Arc<AtomicU16>,
     content_seq: Arc<AtomicU64>,
     content_write_lock: Arc<Mutex<()>>,
@@ -1519,6 +1522,28 @@ pub struct PaneRuntime {
     // Task handles for deterministic shutdown
     compression: TerminalCompressionTask,
     detect_handle: Option<tokio::task::AbortHandle>,
+}
+
+/// How a pane's child process ended, as reported by its wait handle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChildExitStatus {
+    /// Process exit code. Meaningless when `signal` is set.
+    pub code: u32,
+    /// Signal name when the child was killed by a signal.
+    pub signal: Option<String>,
+}
+
+impl ChildExitStatus {
+    fn from_portable(status: &portable_pty::ExitStatus) -> Self {
+        Self {
+            code: status.exit_code(),
+            signal: status.signal().map(str::to_string),
+        }
+    }
+
+    pub(crate) fn success(&self) -> bool {
+        self.signal.is_none() && self.code == 0
+    }
 }
 
 enum PaneRuntimeIo {
@@ -2668,6 +2693,7 @@ impl PaneRuntime {
             persistence_cwd: Mutex::new(None),
             cwd_process_exited,
             child_wait_completed: None,
+            child_exit_status: Arc::new(OnceLock::new()),
             kitty_keyboard_flags,
             content_seq,
             content_write_lock,
@@ -2730,6 +2756,7 @@ impl PaneRuntime {
         let child_pid = Arc::new(AtomicU32::new(0));
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
+        let child_exit_status = Arc::new(OnceLock::new());
         let content_seq = Arc::new(AtomicU64::new(0));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
@@ -2737,6 +2764,7 @@ impl PaneRuntime {
         {
             let child_pid = child_pid.clone();
             let child_wait_completed = child_wait_completed.clone();
+            let child_exit_status = child_exit_status.clone();
             let events = events.clone();
             let rt = tokio::runtime::Handle::current();
             let mut child = spawned.child;
@@ -2750,6 +2778,7 @@ impl PaneRuntime {
                         let exit_reason = crate::platform::classify_child_exit(&status);
                         let status_text = format!("{status:?}");
                         crate::logging::pane_exited(pane_id.raw(), &status_text);
+                        let _ = child_exit_status.set(ChildExitStatus::from_portable(&status));
                         exit_reason
                     }
                     Err(e) => {
@@ -3281,6 +3310,7 @@ impl PaneRuntime {
             persistence_cwd: Mutex::new(None),
             cwd_process_exited: child_wait_completed.clone(),
             child_wait_completed: Some(child_wait_completed),
+            child_exit_status,
             kitty_keyboard_flags,
             content_seq,
             content_write_lock,
@@ -3844,6 +3874,16 @@ impl PaneRuntime {
         (pid > 0).then_some(pid)
     }
 
+    /// Exit status of the child, once the wait task has observed it.
+    pub(crate) fn child_exit_status(&self) -> Option<ChildExitStatus> {
+        self.child_exit_status.get().cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_test_child_exit(&self, status: ChildExitStatus) {
+        let _ = self.child_exit_status.set(status);
+    }
+
     pub fn follow_cwd(&self) -> Option<std::path::PathBuf> {
         #[cfg(unix)]
         {
@@ -4075,6 +4115,7 @@ impl PaneRuntime {
                 persistence_cwd: Mutex::new(None),
                 cwd_process_exited: Arc::new(AtomicBool::new(false)),
                 child_wait_completed: None,
+                child_exit_status: Arc::new(OnceLock::new()),
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 content_seq: Arc::new(AtomicU64::new(0)),
                 content_write_lock: Arc::new(Mutex::new(())),
@@ -5428,6 +5469,7 @@ mod tests {
             child_pid: Arc::new(AtomicU32::new(0)),
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
+            child_exit_status: Arc::new(OnceLock::new()),
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             content_seq: Arc::new(AtomicU64::new(0)),
             content_write_lock: Arc::new(Mutex::new(())),
@@ -5468,6 +5510,7 @@ mod tests {
             child_pid: Arc::new(AtomicU32::new(0)),
             reported_cwd: Arc::new(Mutex::new(None)),
             child_wait_completed: None,
+            child_exit_status: Arc::new(OnceLock::new()),
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             content_seq: Arc::new(AtomicU64::new(0)),
             content_write_lock: Arc::new(Mutex::new(())),
