@@ -1757,6 +1757,17 @@ platforms = ["linux", "macos"]
     }
 
     #[test]
+    fn region_fixture_manifest_loads() {
+        let plugin = load_plugin_manifest("tests/fixtures/plugin-region", true)
+            .expect("region fixture should load");
+        assert_eq!(plugin.plugin_id, "example.region");
+        assert_eq!(plugin.regions.len(), 1);
+        assert_eq!(plugin.regions[0].id, "board");
+        assert_eq!(plugin.regions[0].command, vec!["sh", "region.sh"]);
+        assert!(plugin.warnings.is_empty());
+    }
+
+    #[test]
     fn plugin_command_output_reader_caps_and_marks_truncation() {
         let output = read_capped_plugin_output("abcdef".as_bytes(), 3);
 
