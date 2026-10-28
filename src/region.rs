@@ -466,7 +466,9 @@ mod tests {
     #[test]
     fn occupied_slot_is_refused_and_never_replaced() {
         let mut state = RegionState::default();
-        state.insert(region("region_a", "one", RegionEdge::Right)).unwrap();
+        state
+            .insert(region("region_a", "one", RegionEdge::Right))
+            .unwrap();
         let err = state
             .insert(region("region_b", "two", RegionEdge::Right))
             .unwrap_err();
@@ -481,10 +483,14 @@ mod tests {
     #[test]
     fn freed_slot_can_be_reused() {
         let mut state = RegionState::default();
-        state.insert(region("region_a", "one", RegionEdge::Right)).unwrap();
+        state
+            .insert(region("region_a", "one", RegionEdge::Right))
+            .unwrap();
         assert!(state.remove_by_id("region_a").is_some());
         assert!(state.remove_by_id("region_a").is_none());
-        state.insert(region("region_b", "two", RegionEdge::Right)).unwrap();
+        state
+            .insert(region("region_b", "two", RegionEdge::Right))
+            .unwrap();
         assert_eq!(
             state.get_by_id("region_b").unwrap().plugin_id,
             "two".to_string()
@@ -494,7 +500,9 @@ mod tests {
     #[test]
     fn remove_by_plugin_leaves_other_plugins_alone() {
         let mut state = RegionState::default();
-        state.insert(region("region_a", "keep", RegionEdge::Right)).unwrap();
+        state
+            .insert(region("region_a", "keep", RegionEdge::Right))
+            .unwrap();
         assert!(state.remove_by_plugin("other").is_empty());
         assert_eq!(state.iter().count(), 1);
         let removed = state.remove_by_plugin("keep");
