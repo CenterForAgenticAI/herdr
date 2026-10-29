@@ -5,6 +5,8 @@ use crate::protocol::region_surface::{ClientRegion, RegionProjection, RegionSurf
 
 const REGION_ID: &str = "region_1";
 const REGION_TERMINAL: &str = "terminal-region";
+const BOTTOM_REGION_ID: &str = "region_2";
+const BOTTOM_REGION_TERMINAL: &str = "terminal-bottom-region";
 
 fn region(size: u16, visible: bool, focused: bool) -> ClientRegion {
     ClientRegion {
@@ -56,6 +58,23 @@ fn shell() -> ClientShellState {
     state
 }
 
+fn bottom_region(size: u16, visible: bool, focused: bool) -> ClientRegion {
+    ClientRegion {
+        region_id: BOTTOM_REGION_ID.into(),
+        terminal_id: BOTTOM_REGION_TERMINAL.into(),
+        title: "log".into(),
+        edge: "bottom".into(),
+        ..region(size, visible, focused)
+    }
+}
+
+fn shell_with_regions(regions: Vec<ClientRegion>) -> ClientShellState {
+    let mut state = shell();
+    state.set_endpoint_regions_supported(&ClientEndpointId::Local, true);
+    assert!(state.set_endpoint_region_projection(&ClientEndpointId::Local, projection(1, regions),));
+    state
+}
+
 fn shell_with_region(size: u16, visible: bool, focused: bool) -> ClientShellState {
     let mut state = shell();
     state.set_endpoint_regions_supported(&ClientEndpointId::Local, true);
@@ -92,10 +111,13 @@ fn region_takes_its_width_from_the_right_of_the_tab_area() {
     let state = shell_with_region(30, true, false);
     let layout = state.layout(106, 20);
 
-    assert_eq!(layout.region.width, 30);
-    assert_eq!(layout.region.height, 20, "region runs the full height");
+    assert_eq!(layout.right_region.width, 30);
     assert_eq!(
-        layout.region.x + layout.region.width,
+        layout.right_region.height, 20,
+        "region runs the full height"
+    );
+    assert_eq!(
+        layout.right_region.x + layout.right_region.width,
         baseline.pane_surface.x + baseline.pane_surface.width,
         "region sits at the right edge"
     );
@@ -121,7 +143,7 @@ fn client_without_the_capability_lays_out_exactly_as_before() {
 
     assert_eq!(state.layout(106, 20), baseline);
     state.compose(106, 20).expect("frame");
-    assert!(state.hits.region.is_none());
+    assert!(state.hits.regions.is_empty());
     assert!(state.take_region_viewport_report().is_none());
     let input = state.handle_input_bytes(b"x");
     assert!(matches!(
@@ -143,7 +165,7 @@ fn hidden_region_and_mobile_layout_take_no_space() {
         shell().layout(threshold, 20),
         "mobile layout has no region"
     );
-    assert!(visible.layout(threshold, 20).region.is_empty());
+    assert!(visible.layout(threshold, 20).right_region.is_empty());
 }
 
 #[test]
@@ -166,13 +188,13 @@ fn compose_draws_the_region_terminal_inside_its_border() {
     let mut state = shell_with_region(30, true, false);
     assert!(state.set_endpoint_region_surface(&ClientEndpointId::Local, region_surface()));
     let frame = state.compose(106, 20).expect("frame");
-    let hit = state.hits.region.clone().expect("region hit");
+    let hit = state.hits.regions.first().cloned().expect("region hit");
     let layout = state.layout(106, 20);
-    assert_eq!(hit.outer, layout.region);
+    assert_eq!(hit.outer, layout.right_region);
     let inner = hit.terminal.inner_rect;
     assert_eq!(
         (inner.x, inner.y),
-        (layout.region.x + 1, layout.region.y + 1)
+        (layout.right_region.x + 1, layout.right_region.y + 1)
     );
     let start = usize::from(inner.y) * usize::from(frame.width) + usize::from(inner.x);
     let drawn = frame.cells[start..start + 4]
@@ -182,7 +204,7 @@ fn compose_draws_the_region_terminal_inside_its_border() {
     assert_eq!(drawn, "NOTE");
     let rows = frame_rows(&frame);
     assert!(
-        rows[usize::from(layout.region.y)].contains("notes"),
+        rows[usize::from(layout.right_region.y)].contains("notes"),
         "title on the border"
     );
     assert!(
@@ -255,7 +277,7 @@ fn prefix_key_still_reaches_the_shell_while_a_region_is_focused() {
 fn click_inside_an_unfocused_region_requests_region_focus() {
     let mut state = shell_with_region(30, true, false);
     state.compose(106, 20).expect("frame");
-    let hit = state.hits.region.clone().expect("region hit");
+    let hit = state.hits.regions.first().cloned().expect("region hit");
 
     let click = state.handle_raw_events(vec![mouse(
         MouseEventKind::Down(MouseButton::Left),
@@ -305,8 +327,9 @@ fn wheel_and_mouse_reports_go_to_a_reporting_region_terminal() {
     state.compose(106, 20).expect("frame");
     let inner = state
         .hits
-        .region
-        .clone()
+        .regions
+        .first()
+        .cloned()
         .expect("region hit")
         .terminal
         .inner_rect;
@@ -352,7 +375,13 @@ fn wheel_and_mouse_reports_go_to_a_reporting_region_terminal() {
 fn dragging_the_left_border_requests_a_resize() {
     let mut state = shell_with_region(30, true, false);
     state.compose(106, 20).expect("frame");
-    let outer = state.hits.region.clone().expect("region hit").outer;
+    let outer = state
+        .hits
+        .regions
+        .first()
+        .cloned()
+        .expect("region hit")
+        .outer;
     let right_edge = outer.x + outer.width;
 
     let press = state.handle_raw_events(vec![mouse(
@@ -499,23 +528,221 @@ fn older_same_boot_projection_is_ignored() {
         &ClientEndpointId::Local,
         projection(1, vec![region(50, true, true)]),
     ));
-    assert_eq!(state.layout(106, 20).region.width, 30);
+    assert_eq!(state.layout(106, 20).right_region.width, 30);
     assert!(
         state.set_endpoint_region_projection(&ClientEndpointId::Local, projection(2, Vec::new()),)
     );
-    assert!(state.layout(106, 20).region.is_empty());
+    assert!(state.layout(106, 20).right_region.is_empty());
 }
 
 #[test]
 fn disconnect_forgets_the_endpoint_regions() {
     let mut state = shell_with_region(30, true, true);
     state.mark_endpoint_disconnected(&ClientEndpointId::Local);
-    assert!(state.layout(106, 20).region.is_empty());
+    assert!(state.layout(106, 20).right_region.is_empty());
     assert!(
         !state.set_endpoint_region_projection(
             &ClientEndpointId::Local,
             projection(5, vec![region(30, true, true)]),
         ),
         "a reconnect must re-advertise the capability first"
+    );
+}
+
+#[test]
+fn bottom_region_takes_its_height_from_the_bottom_of_the_tab_area() {
+    let baseline = shell().layout(106, 30);
+    let state = shell_with_regions(vec![bottom_region(8, true, false)]);
+    let layout = state.layout(106, 30);
+
+    assert_eq!(layout.bottom_region.height, 8);
+    assert_eq!(layout.bottom_region.x, baseline.pane_surface.x);
+    assert_eq!(layout.bottom_region.width, baseline.pane_surface.width);
+    assert_eq!(
+        layout.bottom_region.y + layout.bottom_region.height,
+        30,
+        "region sits at the bottom edge"
+    );
+    assert_eq!(layout.pane_surface.height, baseline.pane_surface.height - 8);
+    assert!(
+        layout.pane_surface.y + layout.pane_surface.height <= layout.bottom_region.y,
+        "pane surface stays above the region"
+    );
+    assert!(
+        layout.tab_bar.y + layout.tab_bar.height <= layout.bottom_region.y,
+        "tab bar stays above the region"
+    );
+    assert!(layout.right_region.is_empty());
+}
+
+#[test]
+fn bottom_region_sits_beside_a_right_region() {
+    let state = shell_with_regions(vec![region(30, true, false), bottom_region(8, true, false)]);
+    let layout = state.layout(106, 30);
+
+    assert_eq!(
+        layout.right_region.height, 30,
+        "right region keeps full height"
+    );
+    assert_eq!(
+        layout.bottom_region.x + layout.bottom_region.width,
+        layout.right_region.x,
+        "bottom region ends where the right region starts"
+    );
+    assert_eq!(layout.bottom_region.width, layout.pane_surface.width);
+}
+
+#[test]
+fn bottom_region_with_a_bottom_tab_bar_keeps_the_bar_above_the_region() {
+    let mut config = Config::default();
+    config.ui.tab_bar_position = crate::config::TabBarPositionConfig::Bottom;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.set_endpoint_regions_supported(&ClientEndpointId::Local, true);
+    state.set_endpoint_region_projection(
+        &ClientEndpointId::Local,
+        projection(1, vec![bottom_region(8, true, false)]),
+    );
+    let layout = state.layout(106, 30);
+    assert_eq!(layout.tab_bar.height, 1, "fixture shows the tab bar");
+    assert_eq!(
+        layout.tab_bar.y + layout.tab_bar.height,
+        layout.bottom_region.y,
+        "tab bar sits directly above the region"
+    );
+    assert_eq!(layout.pane_surface.y, 0);
+    assert!(layout.pane_surface.y + layout.pane_surface.height <= layout.bottom_region.y);
+}
+
+#[test]
+fn both_regions_are_drawn_hit_and_reported() {
+    let mut state =
+        shell_with_regions(vec![region(30, true, false), bottom_region(8, true, false)]);
+    state.compose(106, 30).expect("frame");
+    let layout = state.layout(106, 30);
+    let outers: Vec<_> = state.hits.regions.iter().map(|hit| hit.outer).collect();
+    assert_eq!(outers, vec![layout.right_region, layout.bottom_region]);
+
+    let mut reported = Vec::new();
+    while let Some((_, message)) = state.take_region_viewport_report() {
+        let ClientMessage::EndpointControl { data, .. } = message else {
+            panic!("viewport rides EndpointControl");
+        };
+        let viewport = crate::protocol::region_surface::decode_viewport(&data).expect("viewport");
+        reported.push((viewport.region_id, viewport.cols, viewport.rows));
+    }
+    reported.sort();
+    let bottom_inner = crate::region::region_inner(layout.bottom_region);
+    let right_inner = crate::region::region_inner(layout.right_region);
+    assert_eq!(
+        reported,
+        vec![
+            (REGION_ID.to_owned(), right_inner.width, right_inner.height),
+            (
+                BOTTOM_REGION_ID.to_owned(),
+                bottom_inner.width,
+                bottom_inner.height
+            ),
+        ]
+    );
+}
+
+#[test]
+fn dragging_the_top_border_of_a_bottom_region_requests_a_resize() {
+    let mut state = shell_with_regions(vec![bottom_region(8, true, false)]);
+    state.compose(106, 30).expect("frame");
+    let outer = state
+        .hits
+        .regions
+        .first()
+        .cloned()
+        .expect("region hit")
+        .outer;
+    let bottom_edge = outer.y + outer.height;
+    let column = outer.x + 5;
+
+    // A press on the left column of a bottom region is not a border.
+    let side = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        outer.x,
+        outer.y + 2,
+    )]);
+    assert!(state.chrome_drag.is_none());
+    drop(side);
+
+    let press = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        outer.y,
+    )]);
+    assert!(
+        endpoint_methods(&press).is_empty(),
+        "pressing the border does not focus"
+    );
+    let drag = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        column,
+        outer.y - 4,
+    )]);
+    let methods = endpoint_methods(&drag);
+    assert!(
+        matches!(
+            &methods[..],
+            [crate::api::schema::Method::RegionResize(params)]
+                if params.region_id == BOTTOM_REGION_ID && params.size == 12
+        ),
+        "{methods:?}"
+    );
+    assert_eq!(bottom_edge - (outer.y - 4), 12);
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        column,
+        outer.y - 4,
+    )]);
+    assert!(state.chrome_drag.is_none());
+}
+
+#[test]
+fn bottom_region_bindings_target_only_the_bottom_region() {
+    let mut state =
+        shell_with_regions(vec![region(30, true, false), bottom_region(8, true, false)]);
+    state.compose(106, 30).expect("frame");
+    let mut outcome = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusBottomRegion),
+        &mut outcome,
+    );
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleBottomRegion),
+        &mut outcome,
+    );
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusRegion),
+        &mut outcome,
+    );
+    let methods = endpoint_methods(&outcome);
+    assert!(
+        matches!(
+            &methods[..],
+            [
+                crate::api::schema::Method::RegionFocus(bottom_focus),
+                crate::api::schema::Method::RegionHide(bottom_hide),
+                crate::api::schema::Method::RegionFocus(right_focus),
+            ] if bottom_focus.region_id == BOTTOM_REGION_ID
+                && bottom_hide.region_id == BOTTOM_REGION_ID
+                && right_focus.region_id == REGION_ID
+        ),
+        "{methods:?}"
+    );
+}
+
+#[test]
+fn focused_bottom_region_takes_keyboard_input() {
+    let mut state = shell_with_regions(vec![region(30, true, false), bottom_region(8, true, true)]);
+    state.compose(106, 30).expect("frame");
+    assert_eq!(
+        state.focused_region_terminal().as_deref(),
+        Some(BOTTOM_REGION_TERMINAL)
     );
 }

@@ -854,6 +854,18 @@
           "description": "Focus the right desktop region, or return focus to the last pane. Unset by default."
         },
         {
+          "key": "keys.toggle_bottom_region",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Show or hide the bottom desktop region. Unset by default."
+        },
+        {
+          "key": "keys.focus_bottom_region",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Focus the bottom desktop region, or return focus to the last pane. Unset by default."
+        },
+        {
           "key": "keys.indexed.tabs",
           "type": "string",
           "default": "unset",
@@ -1125,6 +1137,24 @@
           "type": "boolean",
           "default": "false",
           "description": "Open right-edge regions hidden. Show them with region.show, herdr region show, or the toggle_region key."
+        },
+        {
+          "key": "ui.regions.bottom.enabled",
+          "type": "boolean",
+          "default": "true",
+          "description": "Allow plugins to open a desktop region on the bottom edge. When false, region.open fails with region_edge_disabled."
+        },
+        {
+          "key": "ui.regions.bottom.size",
+          "type": "integer",
+          "default": "unset",
+          "description": "Height in cells for regions opened on the bottom edge. Overrides the size in the plugin manifest and is still clamped to the manifest's min_size and max_size."
+        },
+        {
+          "key": "ui.regions.bottom.start_hidden",
+          "type": "boolean",
+          "default": "false",
+          "description": "Open bottom-edge regions hidden. Show them with region.show, herdr region show, or the toggle_bottom_region key."
         }
       ]
     },
