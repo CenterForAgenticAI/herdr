@@ -563,6 +563,7 @@ impl App {
             return encode_error(id, "plugin_pane_not_found", "plugin pane not found");
         }
         self.state.focus_pane_in_workspace(ws_idx, pane_id);
+        self.state.clear_region_focus();
         self.state.mode = crate::app::Mode::Terminal;
         let Some(record) = self.state.plugin_panes.get(&pane_id).cloned() else {
             return encode_error(id, "plugin_pane_not_found", "plugin pane not found");
