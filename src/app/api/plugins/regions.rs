@@ -610,6 +610,94 @@ command = ["sh", "-c", "sleep 30"]
         cleanup(app, &[root]);
     }
 
+    fn bottom_board_manifest() -> String {
+        format!(
+            r#"
+id = "{BOTTOM_PLUGIN}"
+name = "Bottom Log"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[regions]]
+id = "log"
+title = "Log"
+edge = "bottom"
+size = 10
+min_size = 4
+max_size = 30
+command = ["sh", "-c", "sleep 30"]
+"#
+        )
+    }
+
+    const BOTTOM_PLUGIN: &str = "example.region-log";
+
+    #[tokio::test]
+    async fn bottom_and_right_regions_hold_independent_slots() {
+        let mut app = test_app();
+        let right_root = link_board(&mut app);
+        let bottom_root = link_plugin(&mut app, "region-log", &bottom_board_manifest());
+        let right = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        let bottom = open_board(&mut app, open_params(BOTTOM_PLUGIN, "log"));
+        assert_eq!(right.edge, crate::region::RegionEdge::Right);
+        assert_eq!(bottom.edge, crate::region::RegionEdge::Bottom);
+        assert_eq!(bottom.size, 10);
+        assert_eq!(app.state.regions.iter().count(), 2);
+
+        let second = request(
+            &mut app,
+            Method::RegionOpen(open_params(BOTTOM_PLUGIN, "log")),
+        );
+        assert_eq!(error_code(&second), "region_slot_occupied");
+        cleanup(app, &[right_root, bottom_root]);
+    }
+
+    #[tokio::test]
+    async fn bottom_edge_reads_its_own_config_table() {
+        let mut app = test_app();
+        let root = link_plugin(&mut app, "region-log", &bottom_board_manifest());
+        app.state.regions_config.right.size = Some(50);
+        app.state.regions_config.bottom.size = Some(14);
+        let configured = open_board(&mut app, open_params(BOTTOM_PLUGIN, "log"));
+        assert_eq!(configured.size, 14, "the right edge's size does not apply");
+        request(&mut app, Method::RegionClose(target(&configured.region_id)));
+
+        app.state.regions_config.bottom.start_hidden = true;
+        let hidden = open_board(&mut app, open_params(BOTTOM_PLUGIN, "log"));
+        assert!(!hidden.visible);
+        request(&mut app, Method::RegionClose(target(&hidden.region_id)));
+
+        app.state.regions_config.bottom.enabled = false;
+        let refused = request(
+            &mut app,
+            Method::RegionOpen(open_params(BOTTOM_PLUGIN, "log")),
+        );
+        assert_eq!(error_code(&refused), "region_edge_disabled");
+        cleanup(app, &[root]);
+    }
+
+    #[tokio::test]
+    async fn bottom_region_terminal_starts_full_width_and_size_rows_tall() {
+        let mut app = test_app();
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+        let right_root = link_board(&mut app);
+        let bottom_root = link_plugin(&mut app, "region-log", &bottom_board_manifest());
+        let right = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        let bottom = open_board(&mut app, open_params(BOTTOM_PLUGIN, "log"));
+        let size = |app: &App, region_id: &str| {
+            let region = app.state.regions.get_by_id(region_id).expect("region");
+            app.terminal_runtimes
+                .get(&region.terminal_id)
+                .expect("runtime")
+                .current_size()
+        };
+        // (rows, cols) inside the one-cell border.
+        assert_eq!(size(&app, &right.region_id), (38, 38));
+        assert_eq!(size(&app, &bottom.region_id), (8, 118));
+        cleanup(app, &[right_root, bottom_root]);
+    }
+
     #[tokio::test]
     async fn disabled_edge_refuses_open() {
         let mut app = test_app();

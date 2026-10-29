@@ -191,6 +191,14 @@ pub(crate) fn keybind_help_groups(
                 entry(binding_label(&keybinds.toggle_sidebar), "toggle sidebar"),
                 entry(binding_label(&keybinds.toggle_region), "toggle region"),
                 entry(binding_label(&keybinds.focus_region), "focus region"),
+                entry(
+                    binding_label(&keybinds.toggle_bottom_region),
+                    "toggle bottom region",
+                ),
+                entry(
+                    binding_label(&keybinds.focus_bottom_region),
+                    "focus bottom region",
+                ),
                 entry(binding_label(&keybinds.focus_pane_left), "focus pane left"),
                 entry(binding_label(&keybinds.focus_pane_down), "focus pane down"),
                 entry(binding_label(&keybinds.focus_pane_up), "focus pane up"),

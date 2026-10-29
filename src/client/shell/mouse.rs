@@ -885,10 +885,10 @@ impl ClientShellState {
                         .filter(|hit| hit.pane_id == gesture.hit.pane_id)
                         .or_else(|| {
                             self.hits
-                                .region
-                                .as_ref()
+                                .regions
+                                .iter()
                                 .map(|region| &region.terminal)
-                                .filter(|hit| hit.pane_id == gesture.hit.pane_id)
+                                .find(|hit| hit.pane_id == gesture.hit.pane_id)
                         })
                         .cloned()
                 } else {
@@ -1034,7 +1034,7 @@ impl ClientShellState {
                     return;
                 }
                 Some(ClientChromeDrag::RegionBorder { .. }) => {
-                    self.drag_region_border(mouse.column, outcome);
+                    self.drag_region_border(mouse, outcome);
                     return;
                 }
                 Some(ClientChromeDrag::SidebarSection) => {
