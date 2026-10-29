@@ -184,6 +184,7 @@ impl AppState {
     fn resolve_open_size(&self, launch: &RegionLaunch) -> u16 {
         let configured = match launch.edge {
             RegionEdge::Right => self.regions_config.right.size,
+            RegionEdge::Bottom => self.regions_config.bottom.size,
         };
         let size = launch
             .requested_size
@@ -196,23 +197,33 @@ impl AppState {
     fn region_edge_enabled(&self, edge: RegionEdge) -> bool {
         match edge {
             RegionEdge::Right => self.regions_config.right.enabled,
+            RegionEdge::Bottom => self.regions_config.bottom.enabled,
         }
     }
 
     fn region_edge_starts_hidden(&self, edge: RegionEdge) -> bool {
         match edge {
             RegionEdge::Right => self.regions_config.right.start_hidden,
+            RegionEdge::Bottom => self.regions_config.bottom.start_hidden,
         }
     }
 
-    /// Initial terminal size before any client reports the region's inner rect.
-    fn initial_region_terminal_size(&self, size: u16) -> (u16, u16) {
-        let rows = if self.view.terminal_area.height >= 4 {
-            self.view.terminal_area.height
+    /// Initial terminal size, as (rows, cols), before any client reports the region's inner
+    /// rect. `size` runs across the edge; the other side spans the current terminal area.
+    fn initial_region_terminal_size(&self, edge: RegionEdge, size: u16) -> (u16, u16) {
+        let area = if self.view.terminal_area.height >= 4 {
+            (
+                self.view.terminal_area.width,
+                self.view.terminal_area.height,
+            )
         } else {
-            self.headless_size.1
+            self.headless_size
         };
-        (rows.saturating_sub(2).max(1), size.saturating_sub(2).max(1))
+        let (cols, rows) = match edge {
+            RegionEdge::Right => (size, area.1),
+            RegionEdge::Bottom => (area.0, size),
+        };
+        (rows.saturating_sub(2).max(1), cols.saturating_sub(2).max(1))
     }
 }
 
@@ -244,7 +255,7 @@ impl App {
             });
         }
         let size = self.state.resolve_open_size(&launch);
-        let (rows, cols) = self.state.initial_region_terminal_size(size);
+        let (rows, cols) = self.state.initial_region_terminal_size(launch.edge, size);
         let pane_id = PaneId::alloc();
         let terminal_id = TerminalId::alloc();
         let launch_env = PaneLaunchEnv::from_extra(launch.env).without_pane_identity();

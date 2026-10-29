@@ -11,7 +11,10 @@ use crate::protocol::region_surface::{
 };
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-const RIGHT_EDGE: &str = "right";
+use crate::region::RegionEdge;
+
+/// Edges the client lays out, in layout order.
+pub(super) const CLIENT_REGION_EDGES: [RegionEdge; 2] = [RegionEdge::Right, RegionEdge::Bottom];
 /// Surfaces kept per endpoint. A server never projects more than one region per edge, so this
 /// only bounds what a misbehaving server can make the client retain.
 const MAX_REGION_SURFACES: usize = 8;
@@ -35,7 +38,7 @@ impl ClientEndpointRegions {
         };
     }
 
-    fn right(&self) -> Option<&ClientRegion> {
+    fn on_edge(&self, edge: RegionEdge) -> Option<&ClientRegion> {
         if !self.supported {
             return None;
         }
@@ -43,18 +46,19 @@ impl ClientEndpointRegions {
             .as_ref()?
             .regions
             .iter()
-            .find(|region| region.edge == RIGHT_EDGE)
+            .find(|region| region.edge == edge.as_str())
     }
 
-    fn shown_right(&self) -> Option<&ClientRegion> {
-        self.right().filter(|region| region.visible)
+    fn shown_on_edge(&self, edge: RegionEdge) -> Option<&ClientRegion> {
+        self.on_edge(edge).filter(|region| region.visible)
     }
 }
 
-/// The region drawn in the last composed frame, kept for mouse hits.
+/// A region drawn in the last composed frame, kept for mouse hits.
 #[derive(Clone)]
 pub(super) struct RegionHit {
     pub(super) region_id: String,
+    pub(super) edge: RegionEdge,
     pub(super) outer: Rect,
     pub(super) focused: bool,
     /// Terminal hit for the inner area. `popup` is set so input goes to the region terminal.
@@ -69,13 +73,17 @@ impl ClientShellState {
             .map(|endpoint| &endpoint.regions)
     }
 
-    fn active_right_region(&self) -> Option<&ClientRegion> {
-        self.active_regions()?.shown_right()
+    fn active_region(&self, edge: RegionEdge) -> Option<&ClientRegion> {
+        self.active_regions()?.shown_on_edge(edge)
     }
 
-    /// Width the active endpoint's right region asks for, when one is shown.
-    pub(super) fn right_region_request(&self) -> Option<u16> {
-        self.active_right_region().map(|region| region.size)
+    /// Sizes the active endpoint's shown regions ask for.
+    pub(super) fn region_requests(&self) -> crate::region::RegionSizes {
+        let size = |edge| self.active_region(edge).map(|region| region.size);
+        crate::region::RegionSizes {
+            right: size(RegionEdge::Right),
+            bottom: size(RegionEdge::Bottom),
+        }
     }
 
     pub(crate) fn set_endpoint_regions_supported(
@@ -165,11 +173,14 @@ impl ClientShellState {
         active
     }
 
-    /// Terminal of the focused right region, when that region is on screen.
+    /// Terminal of the focused region, when that region is on screen.
     pub(super) fn focused_region_terminal(&self) -> Option<String> {
-        let region = self.active_right_region().filter(|region| region.focused)?;
         let (cols, rows) = self.last_composed_size?;
-        (!self.layout(cols, rows).region.is_empty()).then(|| region.terminal_id.clone())
+        let layout = self.layout(cols, rows);
+        CLIENT_REGION_EDGES.into_iter().find_map(|edge| {
+            let region = self.active_region(edge).filter(|region| region.focused)?;
+            (!layout.region(edge).is_empty()).then(|| region.terminal_id.clone())
+        })
     }
 
     /// Where keyboard input goes: the focused region, else the focused pane.
@@ -180,11 +191,11 @@ impl ClientShellState {
     }
 
     /// Draw the region border and title into the chrome buffer.
-    pub(super) fn render_region_border(&self, buffer: &mut Buffer, outer: Rect) {
+    pub(super) fn render_region_border(&self, buffer: &mut Buffer, edge: RegionEdge, outer: Rect) {
         if outer.is_empty() {
             return;
         }
-        let Some(region) = self.active_right_region() else {
+        let Some(region) = self.active_region(edge) else {
             return;
         };
         let palette = &self.config.palette;
@@ -203,11 +214,16 @@ impl ClientShellState {
 
     /// Copy the region terminal into the frame and return its hit. The pane cursor stays
     /// unless the region has focus.
-    pub(super) fn blit_region(&self, frame: &mut FrameData, outer: Rect) -> Option<RegionHit> {
+    pub(super) fn blit_region(
+        &self,
+        frame: &mut FrameData,
+        edge: RegionEdge,
+        outer: Rect,
+    ) -> Option<RegionHit> {
         if outer.is_empty() {
             return None;
         }
-        let region = self.active_right_region()?.clone();
+        let region = self.active_region(edge)?.clone();
         let inner = crate::region::region_inner(outer);
         let surface = self
             .active_regions()
@@ -226,6 +242,7 @@ impl ClientShellState {
         }
         Some(RegionHit {
             region_id: region.region_id,
+            edge,
             outer,
             focused: region.focused,
             terminal: PaneHit {
@@ -243,13 +260,14 @@ impl ClientShellState {
         })
     }
 
-    /// Inner size of the right region to report to the server. A region the layout hides
-    /// for this frame reports zero, which the server treats as not viewing it.
+    /// Inner size of a region to report to the server. A region the layout hides for this
+    /// frame reports zero, which the server treats as not viewing it.
     pub(super) fn region_viewport(
         &self,
+        edge: RegionEdge,
         outer: Rect,
     ) -> Option<(ClientEndpointId, RegionViewport)> {
-        let region = self.active_right_region()?;
+        let region = self.active_region(edge)?;
         let inner = if outer.is_empty() {
             Rect::default()
         } else {
@@ -265,11 +283,24 @@ impl ClientShellState {
         ))
     }
 
-    /// Viewport message to send, when the queued size differs from the last one sent.
+    /// Next viewport message to send, skipping queued sizes equal to the last one sent.
     pub(crate) fn take_region_viewport_report(
         &mut self,
     ) -> Option<(ClientEndpointId, ClientMessage)> {
-        let (endpoint_id, viewport) = self.pending_region_viewport.take()?;
+        while !self.pending_region_viewports.is_empty() {
+            let (endpoint_id, viewport) = self.pending_region_viewports.remove(0);
+            if let Some(report) = self.region_viewport_message(endpoint_id, viewport) {
+                return Some(report);
+            }
+        }
+        None
+    }
+
+    fn region_viewport_message(
+        &mut self,
+        endpoint_id: ClientEndpointId,
+        viewport: RegionViewport,
+    ) -> Option<(ClientEndpointId, ClientMessage)> {
         let endpoint = self
             .endpoints
             .iter_mut()
@@ -301,26 +332,42 @@ impl ClientShellState {
         mouse: MouseEvent,
         outcome: &mut ClientShellInput,
     ) -> bool {
-        let Some(hit) = self.hits.region.clone() else {
-            return false;
-        };
         let point = (mouse.column, mouse.row);
         // Drags and releases belong to whichever gesture started them: a pane selection may
         // run across the region, and region gestures continue through `pane_mouse_gesture`.
-        if matches!(mouse.kind, MouseEventKind::Drag(_) | MouseEventKind::Up(_))
-            || !super::contains(hit.outer, point)
-        {
+        if matches!(mouse.kind, MouseEventKind::Drag(_) | MouseEventKind::Up(_)) {
             return false;
         }
+        let Some(hit) = self
+            .hits
+            .regions
+            .iter()
+            .find(|hit| super::contains(hit.outer, point))
+            .cloned()
+        else {
+            return false;
+        };
         let in_terminal = super::contains(hit.terminal.inner_rect, point);
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) if mouse.column == hit.outer.x => {
-                self.chrome_drag = Some(ClientChromeDrag::RegionBorder {
-                    region_id: hit.region_id,
-                    right_edge: hit.outer.x.saturating_add(hit.outer.width),
-                    last_sent: None,
-                });
+        // The inner border faces the tab area: the left side of a right region, the top of
+        // a bottom region. Its far side stays put while the user drags it.
+        let border = match hit.edge {
+            RegionEdge::Right => {
+                (mouse.column == hit.outer.x).then(|| hit.outer.x.saturating_add(hit.outer.width))
             }
+            RegionEdge::Bottom => {
+                (mouse.row == hit.outer.y).then(|| hit.outer.y.saturating_add(hit.outer.height))
+            }
+        };
+        if let (MouseEventKind::Down(MouseButton::Left), Some(far_edge)) = (mouse.kind, border) {
+            self.chrome_drag = Some(ClientChromeDrag::RegionBorder {
+                region_id: hit.region_id,
+                edge: hit.edge,
+                far_edge,
+                last_sent: None,
+            });
+            return true;
+        }
+        match mouse.kind {
             MouseEventKind::Down(button) => {
                 if self.selection.take().is_some() {
                     outcome.repaint = true;
@@ -360,17 +407,22 @@ impl ClientShellState {
         true
     }
 
-    /// Follow a border drag: the region spans from the pointer to its fixed right edge.
-    pub(super) fn drag_region_border(&mut self, column: u16, outcome: &mut ClientShellInput) {
+    /// Follow a border drag: the region spans from the pointer to its fixed far edge.
+    pub(super) fn drag_region_border(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
         let Some(ClientChromeDrag::RegionBorder {
             region_id,
-            right_edge,
+            edge,
+            far_edge,
             last_sent,
         }) = self.chrome_drag.as_mut()
         else {
             return;
         };
-        let size = right_edge.saturating_sub(column).max(1);
+        let pointer = match edge {
+            RegionEdge::Right => mouse.column,
+            RegionEdge::Bottom => mouse.row,
+        };
+        let size = far_edge.saturating_sub(pointer).max(1);
         if *last_sent == Some(size) {
             return;
         }
@@ -385,9 +437,13 @@ impl ClientShellState {
         );
     }
 
-    /// `toggle_region`: show the right region when hidden, hide it when shown.
-    pub(super) fn toggle_region(&mut self, outcome: &mut ClientShellInput) {
-        let Some(region) = self.active_regions().and_then(|regions| regions.right()) else {
+    /// `toggle_region` and `toggle_bottom_region`: show the edge's region when hidden, hide
+    /// it when shown.
+    pub(super) fn toggle_region(&mut self, edge: RegionEdge, outcome: &mut ClientShellInput) {
+        let Some(region) = self
+            .active_regions()
+            .and_then(|regions| regions.on_edge(edge))
+        else {
             return;
         };
         let target = crate::api::schema::RegionTarget {
@@ -401,9 +457,10 @@ impl ClientShellState {
         self.push_endpoint_method(method, outcome);
     }
 
-    /// `focus_region`: focus the shown right region, or return focus to the last pane.
-    pub(super) fn focus_region(&mut self, outcome: &mut ClientShellInput) {
-        let Some(region) = self.active_right_region() else {
+    /// `focus_region` and `focus_bottom_region`: focus the edge's shown region, or return
+    /// focus to the last pane.
+    pub(super) fn focus_region(&mut self, edge: RegionEdge, outcome: &mut ClientShellInput) {
+        let Some(region) = self.active_region(edge) else {
             return;
         };
         let method = if region.focused {
