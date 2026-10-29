@@ -365,17 +365,21 @@ max_size = 80
 command = ["herdr-board", "--compact"]
 ```
 
-`id`, `title`, and `command` are required. `edge` supports only `right` and
-`scope` supports only `session`; both are the defaults. `size`, `min_size`,
-and `max_size` are widths in cells and default to 32, 8, and 200. A plugin may
-declare each `(edge, scope)` slot once.
+`id`, `title`, and `command` are required. `edge` is `right` (the default) or
+`bottom`. `scope` supports only `session`, the default. `size`, `min_size`, and
+`max_size` are in cells: the width of a right region or the height of a bottom
+region. They default to 32, 8, and 200. A plugin may declare each
+`(edge, scope)` slot once.
 
 Open a region with `herdr region open PLUGIN_ID ENTRYPOINT` or the
 `region.open` socket method. Each slot holds one region at a time; opening a
 second one returns `region_slot_occupied`. Requested sizes are clamped to the
-manifest bounds. When the window is too narrow to keep at least 20 columns for
-the tab area beside the region, Herdr leaves the region out of that frame
-without stopping it, and draws it again once the window is wide enough.
+manifest bounds. A right region runs the full height of the window. A bottom
+region sits below the tab area and spans only its width, so it never runs under
+a right region. Herdr keeps at least 20 columns and 6 rows for the tab area.
+When a region would leave less, Herdr leaves that region out of the frame
+without stopping it, and draws it again once the window is large enough. Each
+edge is checked on its own, so a region that does not fit never hides the other.
 
 A region is not a Herdr pane. It has a `region_id` instead of a pane ID, does
 not appear in `pane.*`, layout, or agent APIs, and its process does not receive
@@ -386,18 +390,20 @@ its process running. When the process exits, the region closes; when the plugin
 is disabled or unlinked, Herdr closes its regions and stops their processes.
 
 Herdr saves open regions with the session and starts them again on restore.
-Only the plugin id, entrypoint, edge, scope, width, and visibility are saved;
+Only the plugin id, entrypoint, edge, scope, size, and visibility are saved;
 the region's terminal contents are not. A restored region never takes focus,
 and Herdr skips it when the plugin is missing, disabled, or no longer declares
 the region. A live handoff (`herdr update --handoff`) does not transfer a
 region's process: the new server starts the region again from the same saved
 fields, so the region's program restarts.
 
-Users can turn off an edge or set its width with `[ui.regions.right]` in
-`config.toml`, and bind `keys.toggle_region` and `keys.focus_region` to show,
-hide, and focus the right region from the keyboard. Both bindings are unset by
-default. With the mouse, click a region to focus it and drag its inner border
-to resize it.
+Users can turn off an edge or set its size with `[ui.regions.right]` and
+`[ui.regions.bottom]` in `config.toml`. Bind `keys.toggle_region` and
+`keys.focus_region` to show, hide, and focus the right region from the keyboard,
+and `keys.toggle_bottom_region` and `keys.focus_bottom_region` for the bottom
+region. All four bindings are unset by default. With the mouse, click a region
+to focus it and drag its inner border to resize it: the left border of a right
+region, the top border of a bottom region.
 
 ## Keybindings
 
