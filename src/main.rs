@@ -195,6 +195,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # toggle_sidebar = "prefix+b"
 # toggle_region = ""     # optional, shows or hides the right desktop region
 # focus_region = ""      # optional, focuses the right region or returns to the last pane
+# toggle_bottom_region = ""  # optional, shows or hides the bottom desktop region
+# focus_bottom_region = ""   # optional, focuses the bottom region or returns to the last pane
 
 # Navigate-mode movement. These local shortcuts win while navigate mode is open.
 # They are independent from focus_pane_*. Do not include prefix+, esc, enter, tab, or 1..9 here.
