@@ -475,16 +475,21 @@ herdr pane report-metadata <pane_id> \
 
 侧边栏行设置仅影响展开的桌面侧边栏。折叠视图和移动视图仍使用紧凑布局。
 
-插件可以在窗口右边缘停靠一个不属于任何标签页的终端(参见[区域](/zh-cn/docs/plugins/#区域))。`[ui.regions.right]` 控制这一侧:
+插件可以在窗口右边缘或底边停靠一个不属于任何标签页的终端(参见[区域](/zh-cn/docs/plugins/#区域))。`[ui.regions.right]` 和 `[ui.regions.bottom]` 分别控制这两侧:
 
 ```toml
 [ui.regions.right]
 enabled = true       # 设为 false 时 region.open 会以 region_edge_disabled 失败
 size = 40            # 以单元格计的宽度;仍会限制在插件的 min_size/max_size 范围内
 start_hidden = false # 设为 true 时区域以隐藏状态打开,直到被显示
+
+[ui.regions.bottom]
+enabled = true
+size = 12            # 以行计的高度;仍会限制在插件的 min_size/max_size 范围内
+start_hidden = false
 ```
 
-`size` 默认未设置,此时使用插件清单中的宽度。绑定 `keys.toggle_region` 和 `keys.focus_region` 即可用键盘显示、隐藏和聚焦区域;两者默认都未设置。
+`size` 默认未设置,此时使用插件清单中的尺寸。绑定 `keys.toggle_region` 和 `keys.focus_region` 可用键盘显示、隐藏和聚焦右侧区域,绑定 `keys.toggle_bottom_region` 和 `keys.focus_bottom_region` 则对应底部区域;四者默认都未设置。
 
 ## 通知
 

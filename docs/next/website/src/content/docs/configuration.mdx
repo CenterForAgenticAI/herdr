@@ -479,16 +479,21 @@ Metadata reporters provide values only; styling stays in the local sidebar confi
 
 Sidebar row settings affect only the expanded desktop sidebar. Collapsed and mobile views keep their compact layouts.
 
-Plugins can dock a terminal at the right edge of the window, outside every tab (see [Regions](/docs/plugins/#regions)). `[ui.regions.right]` controls that edge:
+Plugins can dock a terminal at the right or bottom edge of the window, outside every tab (see [Regions](/docs/plugins/#regions)). `[ui.regions.right]` and `[ui.regions.bottom]` control those edges:
 
 ```toml
 [ui.regions.right]
 enabled = true       # false makes region.open fail with region_edge_disabled
 size = 40            # width in cells; still clamped to the plugin's min_size/max_size
 start_hidden = false # true opens regions hidden until shown
+
+[ui.regions.bottom]
+enabled = true
+size = 12            # height in rows; still clamped to the plugin's min_size/max_size
+start_hidden = false
 ```
 
-`size` is unset by default, so the plugin manifest's width applies. Bind `keys.toggle_region` and `keys.focus_region` to show, hide, and focus the region from the keyboard; both are unset by default.
+`size` is unset by default, so the plugin manifest's size applies. Bind `keys.toggle_region` and `keys.focus_region` to show, hide, and focus the right region from the keyboard, and `keys.toggle_bottom_region` and `keys.focus_bottom_region` for the bottom region; all four are unset by default.
 
 ## Notifications
 

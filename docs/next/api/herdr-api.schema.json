@@ -1138,9 +1138,10 @@
           "type": "string"
         },
         "RegionEdge": {
-          "description": "Frame edge a region occupies. Phase 1 supports only `right`.",
+          "description": "Frame edge a region occupies.",
           "enum": [
-            "right"
+            "right",
+            "bottom"
           ],
           "type": "string"
         },
@@ -9795,9 +9796,10 @@
           "type": "string"
         },
         "RegionEdge": {
-          "description": "Frame edge a region occupies. Phase 1 supports only `right`.",
+          "description": "Frame edge a region occupies.",
           "enum": [
-            "right"
+            "right",
+            "bottom"
           ],
           "type": "string"
         },

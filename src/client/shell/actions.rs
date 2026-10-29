@@ -20,10 +20,16 @@ impl ClientShellState {
                 self.persist_chrome_preferences(outcome);
             }
             crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleRegion) => {
-                self.toggle_region(outcome);
+                self.toggle_region(crate::region::RegionEdge::Right, outcome);
             }
             crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusRegion) => {
-                self.focus_region(outcome);
+                self.focus_region(crate::region::RegionEdge::Right, outcome);
+            }
+            crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleBottomRegion) => {
+                self.toggle_region(crate::region::RegionEdge::Bottom, outcome);
+            }
+            crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusBottomRegion) => {
+                self.focus_region(crate::region::RegionEdge::Bottom, outcome);
             }
             crate::input::KeybindMatch::Action(action) => {
                 if self.workspace_preview_action_blocked()
