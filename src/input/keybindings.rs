@@ -63,6 +63,8 @@ pub(crate) enum KeybindAction {
     ToggleSidebar,
     ToggleRegion,
     FocusRegion,
+    ToggleBottomRegion,
+    FocusBottomRegion,
     CyclePaneNext,
     CyclePanePrevious,
     LastPane,
@@ -151,6 +153,14 @@ pub(crate) fn resolve_non_indexed_action(
         (&keybinds.toggle_sidebar, KeybindAction::ToggleSidebar),
         (&keybinds.toggle_region, KeybindAction::ToggleRegion),
         (&keybinds.focus_region, KeybindAction::FocusRegion),
+        (
+            &keybinds.toggle_bottom_region,
+            KeybindAction::ToggleBottomRegion,
+        ),
+        (
+            &keybinds.focus_bottom_region,
+            KeybindAction::FocusBottomRegion,
+        ),
         (&keybinds.reload_config, KeybindAction::ReloadConfig),
         (
             &keybinds.open_notification_target,

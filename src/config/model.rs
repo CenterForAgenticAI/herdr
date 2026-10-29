@@ -201,6 +201,8 @@ fn parse_right_click_passthrough_modifier(value: &str) -> Option<Option<KeyModif
 pub struct RegionsConfig {
     /// Right-edge region settings.
     pub right: RegionEdgeConfig,
+    /// Bottom-edge region settings.
+    pub bottom: RegionEdgeConfig,
 }
 
 /// Settings for the plugin region on one edge of the client frame.
@@ -209,7 +211,7 @@ pub struct RegionsConfig {
 pub struct RegionEdgeConfig {
     /// Allow plugins to open a region on this edge. When false, region.open fails with region_edge_disabled. Default: true.
     pub enabled: bool,
-    /// Width in cells for regions opened on this edge. Overrides the manifest default; still clamped to the manifest bounds. Default: unset.
+    /// Size in cells for regions opened on this edge: width on the right edge, height on the bottom edge. Overrides the manifest default; still clamped to the manifest bounds. Default: unset.
     pub size: Option<u16>,
     /// Open regions on this edge hidden. Show them with region.show or the toggle_region key. Default: false.
     pub start_hidden: bool,
@@ -489,6 +491,10 @@ pub struct KeysConfig {
     pub toggle_region: BindingConfig,
     /// Focus the right desktop region, or return focus to the last pane. Unset by default.
     pub focus_region: BindingConfig,
+    /// Show or hide the bottom desktop region. Unset by default.
+    pub toggle_bottom_region: BindingConfig,
+    /// Focus the bottom desktop region, or return focus to the last pane. Unset by default.
+    pub focus_bottom_region: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
     /// Prefix-mode custom command bindings.
@@ -630,6 +636,10 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     focus_region: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    toggle_bottom_region: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focus_bottom_region: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
     #[serde(skip_serializing)]
     command: Option<Vec<CommandKeybindConfig>>,
@@ -743,6 +753,8 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(toggle_sidebar);
         apply_field!(toggle_region);
         apply_field!(focus_region);
+        apply_field!(toggle_bottom_region);
+        apply_field!(focus_bottom_region);
         apply_field!(indexed);
         apply_field!(command);
 
@@ -850,6 +862,8 @@ impl KeysConfig {
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
         copy_effective_action_field!(toggle_region, keybinds.toggle_region);
         copy_effective_action_field!(focus_region, keybinds.focus_region);
+        copy_effective_action_field!(toggle_bottom_region, keybinds.toggle_bottom_region);
+        copy_effective_action_field!(focus_bottom_region, keybinds.focus_bottom_region);
         copy_user_field!(indexed);
 
         profile
@@ -1226,6 +1240,8 @@ impl Default for KeysConfig {
             toggle_sidebar: BindingConfig::one("prefix+b"),
             toggle_region: BindingConfig::empty(),
             focus_region: BindingConfig::empty(),
+            toggle_bottom_region: BindingConfig::empty(),
+            focus_bottom_region: BindingConfig::empty(),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
             user_fields: BTreeSet::new(),

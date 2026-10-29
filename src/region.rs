@@ -16,8 +16,10 @@ use crate::terminal::TerminalId;
 
 /// The tab area never shrinks below this width to make room for a region.
 pub(crate) const MIN_TAB_SURFACE_WIDTH: u16 = 20;
-/// A region is hidden for a frame shorter than this.
+/// A right region is hidden for a frame shorter than this.
 pub(crate) const MIN_REGION_HEIGHT: u16 = 3;
+/// The tab area never shrinks below this height to make room for a bottom region.
+pub(crate) const MIN_TAB_SURFACE_HEIGHT: u16 = 6;
 /// Absolute lower bound for any region size, including manifest and config bounds.
 pub(crate) const REGION_SIZE_FLOOR: u16 = 4;
 /// Absolute upper bound for any region size, including manifest and config bounds.
@@ -26,7 +28,7 @@ pub(crate) const DEFAULT_REGION_SIZE: u16 = 32;
 pub(crate) const DEFAULT_REGION_MIN_SIZE: u16 = 8;
 pub(crate) const DEFAULT_REGION_MAX_SIZE: u16 = 200;
 
-/// Frame edge a region occupies. Phase 1 supports only `right`.
+/// Frame edge a region occupies.
 #[derive(
     Debug,
     Clone,
@@ -45,20 +47,23 @@ pub(crate) const DEFAULT_REGION_MAX_SIZE: u16 = 200;
 pub enum RegionEdge {
     #[default]
     Right,
+    Bottom,
 }
 
 impl RegionEdge {
-    pub(crate) const SUPPORTED: &'static [&'static str] = &["right"];
+    pub(crate) const SUPPORTED: &'static [&'static str] = &["right", "bottom"];
 
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Right => "right",
+            Self::Bottom => "bottom",
         }
     }
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "right" => Some(Self::Right),
+            "bottom" => Some(Self::Bottom),
             _ => None,
         }
     }
@@ -286,45 +291,67 @@ impl RegionState {
     }
 }
 
+/// Sizes the shown regions ask for, one per edge. `None` or zero means no region there.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RegionSizes {
+    pub right: Option<u16>,
+    pub bottom: Option<u16>,
+}
+
 /// Frame split between region strips and the remaining tab area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RegionLayout {
     /// Outer rect of the right region, or `None` when absent or hidden for this frame.
     pub right: Option<Rect>,
+    /// Outer rect of the bottom region, or `None` when absent or hidden for this frame.
+    pub bottom: Option<Rect>,
     /// Area left for the tab bar and pane surface.
     pub remaining: Rect,
 }
 
-/// Take `right` cells from the right of `main`.
+/// Take the right region's width from the right of `main` at full height, then the bottom
+/// region's height from the bottom of what is left. The bottom region therefore spans only
+/// the tab area's width and never runs under the right region.
 ///
-/// The region is hidden for this frame (not shrunk, not closed) when the remaining tab area
-/// would be narrower than `MIN_TAB_SURFACE_WIDTH` or the frame is shorter than
-/// `MIN_REGION_HEIGHT`. A hostile size can therefore never consume the frame.
-pub(crate) fn layout_regions(main: Rect, right: Option<u16>) -> RegionLayout {
-    let hidden = RegionLayout {
-        right: None,
-        remaining: main,
-    };
-    let Some(size) = right.filter(|size| *size > 0) else {
-        return hidden;
-    };
-    if main.height < MIN_REGION_HEIGHT {
-        return hidden;
-    }
-    let Some(remaining_width) = main.width.checked_sub(size) else {
-        return hidden;
-    };
-    if remaining_width < MIN_TAB_SURFACE_WIDTH {
-        return hidden;
-    }
+/// A region is hidden for this frame (not shrunk, not closed) when it would leave the tab
+/// area narrower than `MIN_TAB_SURFACE_WIDTH` or shorter than `MIN_TAB_SURFACE_HEIGHT`, or
+/// when the frame is shorter than `MIN_REGION_HEIGHT`. Each edge is decided on its own, so
+/// one oversized region never hides the other. A hostile size can never consume the frame.
+pub(crate) fn layout_regions(main: Rect, sizes: RegionSizes) -> RegionLayout {
+    let mut remaining = main;
+    let right = sizes
+        .right
+        .filter(|size| *size > 0 && main.height >= MIN_REGION_HEIGHT)
+        .and_then(|size| {
+            let width = remaining.width.checked_sub(size)?;
+            (width >= MIN_TAB_SURFACE_WIDTH).then(|| {
+                let rect = Rect::new(
+                    remaining.x.saturating_add(width),
+                    remaining.y,
+                    size,
+                    remaining.height,
+                );
+                remaining.width = width;
+                rect
+            })
+        });
+    let bottom = sizes.bottom.filter(|size| *size > 0).and_then(|size| {
+        let height = remaining.height.checked_sub(size)?;
+        (height >= MIN_TAB_SURFACE_HEIGHT).then(|| {
+            let rect = Rect::new(
+                remaining.x,
+                remaining.y.saturating_add(height),
+                remaining.width,
+                size,
+            );
+            remaining.height = height;
+            rect
+        })
+    });
     RegionLayout {
-        right: Some(Rect::new(
-            main.x.saturating_add(remaining_width),
-            main.y,
-            size,
-            main.height,
-        )),
-        remaining: Rect::new(main.x, main.y, remaining_width, main.height),
+        right,
+        bottom,
+        remaining,
     }
 }
 
@@ -358,10 +385,98 @@ mod tests {
         }
     }
 
+    fn right(size: u16) -> RegionSizes {
+        RegionSizes {
+            right: Some(size),
+            bottom: None,
+        }
+    }
+
+    fn bottom(size: u16) -> RegionSizes {
+        RegionSizes {
+            right: None,
+            bottom: Some(size),
+        }
+    }
+
+    #[test]
+    fn layout_takes_size_from_the_bottom_at_full_width() {
+        let main = Rect::new(26, 0, 100, 40);
+        let layout = layout_regions(main, bottom(12));
+        assert_eq!(layout.bottom, Some(Rect::new(26, 28, 100, 12)));
+        assert_eq!(layout.right, None);
+        assert_eq!(layout.remaining, Rect::new(26, 0, 100, 28));
+    }
+
+    #[test]
+    fn bottom_region_spans_only_the_tab_area_beside_a_right_region() {
+        let main = Rect::new(26, 0, 100, 40);
+        let layout = layout_regions(
+            main,
+            RegionSizes {
+                right: Some(30),
+                bottom: Some(12),
+            },
+        );
+        assert_eq!(layout.right, Some(Rect::new(96, 0, 30, 40)));
+        assert_eq!(layout.bottom, Some(Rect::new(26, 28, 70, 12)));
+        assert_eq!(layout.remaining, Rect::new(26, 0, 70, 28));
+    }
+
+    #[test]
+    fn layout_hides_bottom_exactly_when_tab_area_would_drop_below_minimum_height() {
+        let fits = Rect::new(0, 0, 80, 12 + MIN_TAB_SURFACE_HEIGHT);
+        let layout = layout_regions(fits, bottom(12));
+        assert_eq!(layout.remaining.height, MIN_TAB_SURFACE_HEIGHT);
+        assert!(layout.bottom.is_some());
+
+        let one_short = Rect::new(0, 0, 80, 12 + MIN_TAB_SURFACE_HEIGHT - 1);
+        let layout = layout_regions(one_short, bottom(12));
+        assert_eq!(layout.bottom, None);
+        assert_eq!(layout.remaining, one_short);
+    }
+
+    #[test]
+    fn an_oversized_region_on_one_edge_does_not_hide_the_other() {
+        let main = Rect::new(0, 0, 100, 40);
+        let layout = layout_regions(
+            main,
+            RegionSizes {
+                right: Some(u16::MAX),
+                bottom: Some(10),
+            },
+        );
+        assert_eq!(layout.right, None);
+        assert_eq!(layout.bottom, Some(Rect::new(0, 30, 100, 10)));
+
+        let layout = layout_regions(
+            main,
+            RegionSizes {
+                right: Some(30),
+                bottom: Some(u16::MAX),
+            },
+        );
+        assert_eq!(layout.right, Some(Rect::new(70, 0, 30, 40)));
+        assert_eq!(layout.bottom, None);
+        assert_eq!(layout.remaining, Rect::new(0, 0, 70, 40));
+    }
+
+    #[test]
+    fn hostile_bottom_size_cannot_consume_the_frame() {
+        for main in [Rect::new(0, 0, 80, u16::MAX), Rect::new(0, 3, 80, 40)] {
+            let layout = layout_regions(main, bottom(u16::MAX));
+            assert_eq!(layout.bottom, None, "{main:?}");
+            assert_eq!(layout.remaining, main);
+        }
+        let main = Rect::new(0, 0, 80, u16::MAX);
+        let layout = layout_regions(main, bottom(u16::MAX - MIN_TAB_SURFACE_HEIGHT));
+        assert_eq!(layout.remaining.height, MIN_TAB_SURFACE_HEIGHT);
+    }
+
     #[test]
     fn layout_takes_size_from_the_right_at_full_height() {
         let main = Rect::new(26, 0, 100, 40);
-        let layout = layout_regions(main, Some(30));
+        let layout = layout_regions(main, right(30));
         assert_eq!(layout.right, Some(Rect::new(96, 0, 30, 40)));
         assert_eq!(layout.remaining, Rect::new(26, 0, 70, 40));
     }
@@ -370,25 +485,26 @@ mod tests {
     fn layout_without_region_leaves_main_untouched() {
         let main = Rect::new(0, 1, 80, 24);
         assert_eq!(
-            layout_regions(main, None),
+            layout_regions(main, RegionSizes::default()),
             RegionLayout {
                 right: None,
+                bottom: None,
                 remaining: main
             }
         );
-        assert_eq!(layout_regions(main, Some(0)).right, None);
-        assert_eq!(layout_regions(main, Some(0)).remaining, main);
+        assert_eq!(layout_regions(main, right(0)).right, None);
+        assert_eq!(layout_regions(main, right(0)).remaining, main);
     }
 
     #[test]
     fn layout_hides_exactly_when_tab_area_would_drop_below_minimum() {
         let fits = Rect::new(0, 0, 30 + MIN_TAB_SURFACE_WIDTH, 10);
-        let layout = layout_regions(fits, Some(30));
+        let layout = layout_regions(fits, right(30));
         assert_eq!(layout.remaining.width, MIN_TAB_SURFACE_WIDTH);
         assert!(layout.right.is_some());
 
         let one_short = Rect::new(0, 0, 30 + MIN_TAB_SURFACE_WIDTH - 1, 10);
-        let layout = layout_regions(one_short, Some(30));
+        let layout = layout_regions(one_short, right(30));
         assert_eq!(layout.right, None);
         assert_eq!(layout.remaining, one_short);
     }
@@ -396,19 +512,19 @@ mod tests {
     #[test]
     fn layout_hides_exactly_below_minimum_height() {
         let fits = Rect::new(0, 0, 100, MIN_REGION_HEIGHT);
-        assert!(layout_regions(fits, Some(30)).right.is_some());
+        assert!(layout_regions(fits, right(30)).right.is_some());
         let short = Rect::new(0, 0, 100, MIN_REGION_HEIGHT - 1);
-        assert_eq!(layout_regions(short, Some(30)).right, None);
-        assert_eq!(layout_regions(short, Some(30)).remaining, short);
+        assert_eq!(layout_regions(short, right(30)).right, None);
+        assert_eq!(layout_regions(short, right(30)).remaining, short);
     }
 
     #[test]
     fn hidden_region_returns_when_the_frame_regrows() {
         let narrow = Rect::new(0, 0, 40, 24);
-        assert_eq!(layout_regions(narrow, Some(30)).right, None);
+        assert_eq!(layout_regions(narrow, right(30)).right, None);
         let wide = Rect::new(0, 0, 120, 24);
         assert_eq!(
-            layout_regions(wide, Some(30)).right,
+            layout_regions(wide, right(30)).right,
             Some(Rect::new(90, 0, 30, 24))
         );
     }
@@ -420,14 +536,14 @@ mod tests {
             Rect::new(10, 0, 200, 50),
             Rect::new(0, 0, 0, 0),
         ] {
-            let layout = layout_regions(main, Some(u16::MAX));
+            let layout = layout_regions(main, right(u16::MAX));
             assert_eq!(layout.right, None, "{main:?}");
             assert_eq!(layout.remaining, main);
         }
         let main = Rect::new(0, 0, u16::MAX, 50);
-        let layout = layout_regions(main, Some(u16::MAX - 10));
+        let layout = layout_regions(main, right(u16::MAX - 10));
         assert_eq!(layout.right, None);
-        let layout = layout_regions(main, Some(u16::MAX - MIN_TAB_SURFACE_WIDTH));
+        let layout = layout_regions(main, right(u16::MAX - MIN_TAB_SURFACE_WIDTH));
         assert_eq!(layout.remaining.width, MIN_TAB_SURFACE_WIDTH);
     }
 
@@ -540,6 +656,7 @@ mod tests {
     #[test]
     fn edge_and_scope_parse_only_supported_values() {
         assert_eq!(RegionEdge::parse("right"), Some(RegionEdge::Right));
+        assert_eq!(RegionEdge::parse("bottom"), Some(RegionEdge::Bottom));
         assert_eq!(RegionEdge::parse("left"), None);
         assert_eq!(RegionScope::parse("session"), Some(RegionScope::Session));
         assert_eq!(RegionScope::parse("tab"), None);
