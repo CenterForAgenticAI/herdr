@@ -191,10 +191,11 @@ fn region_not_found(id: String, region_id: &str) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use crate::api::schema::{
-        EmptyParams, EventData, EventKind, LayoutExportParams, Method, PaneLayoutParams,
-        PaneListParams, PaneTarget, PluginLinkParams, PluginSetEnabledParams, PluginUnlinkParams,
-        RegionCloseReason, RegionOpenParams, RegionResizeParams, RegionTarget, Request,
-        ResponseResult, SuccessResponse,
+        AgentTarget, EmptyParams, EventData, EventKind, LayoutExportParams, Method, PaneAgentState,
+        PaneLayoutParams, PaneListParams, PaneReportAgentParams, PaneTarget, PluginLinkParams,
+        PluginPaneFocusParams, PluginSetEnabledParams, PluginUnlinkParams, RegionCloseReason,
+        RegionOpenParams, RegionResizeParams, RegionTarget, Request, ResponseResult,
+        SuccessResponse,
     };
     use crate::app::App;
     use std::collections::HashMap;
@@ -832,6 +833,81 @@ command = ["sh", "-c", "sleep 30"]
                 EventKind::RegionVisibilityChanged,
             ]
         );
+        cleanup(app, &[root]);
+    }
+
+    // Invariant 7: agent.focus releases region focus, even on the pane already focused.
+    #[tokio::test]
+    async fn agent_focus_on_the_focused_pane_clears_region_focus() {
+        let mut app = test_app_with_hub(crate::api::EventHub::default());
+        let root = link_board(&mut app);
+        let region = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        let pane_id = app.state.workspaces[0]
+            .focused_pane_id()
+            .and_then(|pane| app.public_pane_id(0, pane))
+            .expect("focused pane");
+        success(&request(
+            &mut app,
+            Method::PaneReportAgent(PaneReportAgentParams {
+                pane_id: pane_id.clone(),
+                source: "custom:pi".into(),
+                agent: "pi".into(),
+                state: PaneAgentState::Working,
+                message: None,
+                seq: None,
+                agent_session_id: None,
+                agent_session_path: None,
+                resume_argv: None,
+            }),
+        ));
+        request(&mut app, Method::RegionFocus(target(&region.region_id)));
+        assert!(app.state.region_focus.is_some());
+
+        let focused = request(
+            &mut app,
+            Method::AgentFocus(AgentTarget {
+                target: pane_id.clone(),
+            }),
+        );
+        let ResponseResult::AgentInfo { agent } = success(&focused) else {
+            panic!("expected agent info: {focused}");
+        };
+        assert_eq!(agent.pane_id, pane_id);
+        assert!(app.state.region_focus.is_none());
+        assert!(!app.state.region_infos()[0].focused);
+        cleanup(app, &[root]);
+    }
+
+    // Invariant 7: plugin.pane.focus releases region focus, even on the pane already focused.
+    #[tokio::test]
+    async fn plugin_pane_focus_on_the_focused_pane_clears_region_focus() {
+        let mut app = test_app_with_hub(crate::api::EventHub::default());
+        let root = link_board(&mut app);
+        let region = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        let pane = app.state.workspaces[0]
+            .focused_pane_id()
+            .expect("focused pane");
+        let pane_id = app.public_pane_id(0, pane).expect("public pane id");
+        app.state.plugin_panes.insert(
+            pane,
+            crate::app::state::PluginPaneRecord {
+                plugin_id: BOARD_PLUGIN.into(),
+                entrypoint: "board".into(),
+            },
+        );
+        request(&mut app, Method::RegionFocus(target(&region.region_id)));
+        assert!(app.state.region_focus.is_some());
+
+        let focused = request(
+            &mut app,
+            Method::PluginPaneFocus(PluginPaneFocusParams { pane_id }),
+        );
+        assert!(
+            matches!(success(&focused), ResponseResult::PluginPaneFocused { .. }),
+            "expected plugin pane focus: {focused}"
+        );
+        assert!(app.state.region_focus.is_none());
+        assert!(!app.state.region_infos()[0].focused);
         cleanup(app, &[root]);
     }
 
