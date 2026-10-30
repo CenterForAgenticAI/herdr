@@ -545,6 +545,7 @@ mod tests {
             sidebar_section_split: None,
             collapsed_space_keys: Default::default(),
             regions: Vec::new(),
+            region_sizes: Vec::new(),
         }
     }
 
