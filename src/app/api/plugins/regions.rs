@@ -1019,6 +1019,43 @@ command = ["sh", "-c", "sleep 30"]
         cleanup(app, &[]);
     }
 
+    // Invariant 7: focus a pane change superseded must not come back when pane focus returns to
+    // the anchor pane. Reproduces: region focused, tab created with focus, tab closed.
+    #[tokio::test]
+    async fn superseded_region_focus_stays_released_when_pane_focus_returns() {
+        let mut app = test_app();
+        let runtime = crate::terminal::TerminalRuntime::test_with_channel(10, 5).0;
+        let region_id = app.install_test_region("example.resurrect", runtime);
+        request(&mut app, Method::RegionFocus(target(region_id.as_str())));
+        assert!(app.state.region_infos()[0].focused);
+
+        let created = request(
+            &mut app,
+            Method::TabCreate(crate::api::schema::TabCreateParams {
+                workspace_id: None,
+                cwd: None,
+                focus: true,
+                label: None,
+                env: Default::default(),
+            }),
+        );
+        let ResponseResult::TabCreated { tab, .. } = success(&created) else {
+            panic!("expected tab created: {created}");
+        };
+        assert!(!app.state.region_infos()[0].focused);
+
+        request(
+            &mut app,
+            Method::TabClose(crate::api::schema::TabTarget { tab_id: tab.tab_id }),
+        );
+        assert!(
+            app.state.region_focus.is_none(),
+            "region focus came back after pane focus returned to its anchor"
+        );
+        assert!(!app.state.region_infos()[0].focused);
+        cleanup(app, &[]);
+    }
+
     // Invariant 6: exit closes the region; only a non-zero exit raises a toast.
     #[tokio::test]
     async fn process_exit_closes_the_region_and_toasts_only_on_failure() {
