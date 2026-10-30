@@ -373,8 +373,10 @@ region. They default to 32, 8, and 200. A plugin may declare each
 
 Open a region with `herdr region open PLUGIN_ID ENTRYPOINT` or the
 `region.open` socket method. Each slot holds one region at a time; opening a
-second one returns `region_slot_occupied`. Requested sizes are clamped to the
-manifest bounds. A right region runs the full height of the window. A bottom
+second one returns `region_slot_occupied`. A region opens at the size the
+request asks for, then the size it was last resized to in this session, then
+the `[ui.regions]` config size, then the manifest `size`. Every size is clamped
+to the current manifest bounds. A right region runs the full height of the window. A bottom
 region sits below the tab area and spans only its width, so it never runs under
 a right region. Herdr keeps at least 20 columns and 6 rows for the tab area.
 When a region would leave less, Herdr leaves that region out of the frame
@@ -390,8 +392,9 @@ its process running. When the process exits, the region closes; when the plugin
 is disabled or unlinked, Herdr closes its regions and stops their processes.
 
 Herdr saves open regions with the session and starts them again on restore.
-Only the plugin id, entrypoint, edge, scope, size, and visibility are saved;
-the region's terminal contents are not. A restored region never takes focus,
+Only the plugin id, entrypoint, edge, scope, size, and visibility are saved,
+plus the size each region was last resized to; the region's terminal contents
+are not. A restored region never takes focus,
 and Herdr skips it when the plugin is missing, disabled, or no longer declares
 the region. A live handoff (`herdr update --handoff`) does not transfer a
 region's process: the new server starts the region again from the same saved
