@@ -403,6 +403,7 @@ pub struct Keybinds {
     pub resize_pane_up: ActionKeybinds,
     pub resize_pane_right: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
+    // rbtrial: planted upstream line beside the sidebar binding.
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
 
@@ -586,6 +587,7 @@ impl Config {
             resize_pane_up: empty_action!(),
             resize_pane_right: empty_action!(),
             toggle_sidebar: empty_action!(),
+            // rbtrial: planted upstream line beside the sidebar default.
             custom_commands: Vec::new(),
         };
 
