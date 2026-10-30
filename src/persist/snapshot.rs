@@ -30,6 +30,10 @@ pub struct SessionSnapshot {
     /// Additive within version 3: older readers ignore the field and keep the session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<RegionSnapshot>,
+    /// Sizes regions were last resized to, so a region closed and reopened keeps its size.
+    /// Additive within version 3, like `regions`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub region_sizes: Vec<RegionSizeSnapshot>,
 }
 
 /// One open desktop region, recorded so restore can respawn it from its plugin manifest.
@@ -41,6 +45,14 @@ pub struct RegionSnapshot {
     pub scope: crate::region::RegionScope,
     pub size: u16,
     pub visible: bool,
+}
+
+/// The size a plugin entrypoint's region was last resized to. Clamped when the region opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegionSizeSnapshot {
+    pub plugin_id: String,
+    pub entrypoint: String,
+    pub size: u16,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -214,19 +226,19 @@ struct RawSessionSnapshot {
     /// only that region instead of the whole session.
     #[serde(default)]
     regions: Vec<serde_json::Value>,
+    #[serde(default)]
+    region_sizes: Vec<serde_json::Value>,
 }
 
-fn migrate_regions(raw: Vec<serde_json::Value>) -> Vec<RegionSnapshot> {
+fn migrate_region_entries<T: serde::de::DeserializeOwned>(raw: Vec<serde_json::Value>) -> Vec<T> {
     raw.into_iter()
-        .filter_map(
-            |value| match serde_json::from_value::<RegionSnapshot>(value) {
-                Ok(region) => Some(region),
-                Err(err) => {
-                    tracing::debug!(err = %err, "dropping unreadable region snapshot");
-                    None
-                }
-            },
-        )
+        .filter_map(|value| match serde_json::from_value::<T>(value) {
+            Ok(entry) => Some(entry),
+            Err(err) => {
+                tracing::debug!(err = %err, "dropping unreadable region snapshot entry");
+                None
+            }
+        })
         .collect()
 }
 
@@ -243,7 +255,8 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
-        regions: migrate_regions(raw.regions),
+        regions: migrate_region_entries(raw.regions),
+        region_sizes: migrate_region_entries(raw.region_sizes),
     })
 }
 
@@ -316,6 +329,7 @@ pub fn capture(
         sidebar_section_split: None,
         collapsed_space_keys: std::collections::HashSet::new(),
         regions: Vec::new(),
+        region_sizes: Vec::new(),
     }
 }
 
@@ -330,6 +344,18 @@ pub fn capture_regions(regions: &crate::region::RegionState) -> Vec<RegionSnapsh
             scope: region.scope,
             size: region.size,
             visible: region.visible,
+        })
+        .collect()
+}
+
+/// Remembered region sizes for the session snapshot.
+pub fn capture_region_sizes(regions: &crate::region::RegionState) -> Vec<RegionSizeSnapshot> {
+    regions
+        .remembered_sizes()
+        .map(|(plugin_id, entrypoint, size)| RegionSizeSnapshot {
+            plugin_id: plugin_id.to_owned(),
+            entrypoint: entrypoint.to_owned(),
+            size,
         })
         .collect()
 }
@@ -714,6 +740,7 @@ mod tests {
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
             regions: Vec::new(),
+            region_sizes: Vec::new(),
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
@@ -804,6 +831,7 @@ mod tests {
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
             regions: Vec::new(),
+            region_sizes: Vec::new(),
             version: SNAPSHOT_VERSION,
         };
 
@@ -929,6 +957,33 @@ mod tests {
                 "visible"
             ]
         );
+    }
+
+    #[test]
+    fn region_sizes_round_trip_and_bad_entries_drop_alone() {
+        let mut snap = capture_from_state(&state_with_workspaces(&["region-sizes"]));
+        snap.region_sizes = vec![RegionSizeSnapshot {
+            plugin_id: "example.board".into(),
+            entrypoint: "board".into(),
+            size: 22,
+        }];
+        let mut value = serde_json::to_value(&snap).unwrap();
+        assert_eq!(value["version"], 3);
+        value["region_sizes"]
+            .as_array_mut()
+            .expect("region_sizes array")
+            .push(
+                serde_json::json!({"plugin_id": "example.bad", "entrypoint": "board", "size": -1}),
+            );
+
+        let restored = parse_snapshot(&value.to_string()).unwrap();
+
+        assert_eq!(restored.region_sizes, snap.region_sizes);
+        let empty = capture_from_state(&state_with_workspaces(&["no-region-sizes"]));
+        assert!(serde_json::to_value(&empty)
+            .unwrap()
+            .get("region_sizes")
+            .is_none());
     }
 
     #[test]
@@ -1603,6 +1658,7 @@ mod tests {
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
             regions: Vec::new(),
+            region_sizes: Vec::new(),
         };
 
         let json = serde_json::to_string(&snap).unwrap();

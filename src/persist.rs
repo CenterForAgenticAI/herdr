@@ -16,7 +16,8 @@ pub(crate) use self::restore::restored_worktree_space_membership;
 #[cfg(unix)]
 pub use self::restore::{handoff_pane_aliases, restore_handoff};
 pub use self::snapshot::{
-    capture, capture_history, capture_regions, DirectionSnapshot, LayoutSnapshot, RegionSnapshot,
-    SessionHistorySnapshot, SessionSnapshot, TabSnapshot, WorkspaceSnapshot,
+    capture, capture_history, capture_region_sizes, capture_regions, DirectionSnapshot,
+    LayoutSnapshot, RegionSizeSnapshot, RegionSnapshot, SessionHistorySnapshot, SessionSnapshot,
+    TabSnapshot, WorkspaceSnapshot,
 };
 pub(crate) use self::writer::SessionWriter;

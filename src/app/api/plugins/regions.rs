@@ -610,6 +610,127 @@ command = ["sh", "-c", "sleep 30"]
         cleanup(app, &[root]);
     }
 
+    fn resize_to(app: &mut App, region_id: &str, size: u32) -> u16 {
+        let response = request(
+            app,
+            Method::RegionResize(RegionResizeParams {
+                region_id: region_id.into(),
+                size,
+            }),
+        );
+        let ResponseResult::RegionInfo { region } = success(&response) else {
+            panic!("expected region info: {response}");
+        };
+        region.size
+    }
+
+    // F-003: a region closed after a resize reopens at the resized size.
+    #[tokio::test]
+    async fn reopen_uses_the_remembered_size_before_config_and_manifest() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+        app.state.regions_config.right.size = Some(50);
+        let first = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        assert_eq!(first.size, 50);
+        assert_eq!(resize_to(&mut app, &first.region_id, 22), 22);
+        request(&mut app, Method::RegionClose(target(&first.region_id)));
+
+        let reopened = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        assert_eq!(
+            reopened.size, 22,
+            "remembered size beats config and manifest"
+        );
+        request(&mut app, Method::RegionClose(target(&reopened.region_id)));
+
+        let mut params = open_params(BOARD_PLUGIN, "board");
+        params.size = Some(35);
+        let requested = open_board(&mut app, params);
+        assert_eq!(
+            requested.size, 35,
+            "an explicit size beats the remembered one"
+        );
+        request(&mut app, Method::RegionClose(target(&requested.region_id)));
+
+        let again = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        assert_eq!(
+            again.size, 22,
+            "opening with a size does not replace the memory"
+        );
+        cleanup(app, &[root]);
+    }
+
+    #[tokio::test]
+    async fn remembered_size_is_clamped_to_the_current_manifest_bounds() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+        // Board bounds are 12..=60; a remembered 500 (hand-edited session, or a manifest
+        // that has since narrowed its bounds) must not survive.
+        app.restore_region_sizes(&[crate::persist::RegionSizeSnapshot {
+            plugin_id: BOARD_PLUGIN.into(),
+            entrypoint: "board".into(),
+            size: 500,
+        }]);
+        let wide = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        assert_eq!(wide.size, 60);
+        request(&mut app, Method::RegionClose(target(&wide.region_id)));
+
+        app.restore_region_sizes(&[crate::persist::RegionSizeSnapshot {
+            plugin_id: BOARD_PLUGIN.into(),
+            entrypoint: "board".into(),
+            size: 0,
+        }]);
+        let narrow = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        assert_eq!(narrow.size, 12);
+        cleanup(app, &[root]);
+    }
+
+    #[tokio::test]
+    async fn remembered_size_belongs_to_one_plugin_entrypoint() {
+        let mut app = test_app();
+        let right_root = link_board(&mut app);
+        let bottom_root = link_plugin(&mut app, "region-log", &bottom_board_manifest());
+        let board = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        resize_to(&mut app, &board.region_id, 22);
+        let log = open_board(&mut app, open_params(BOTTOM_PLUGIN, "log"));
+        assert_eq!(log.size, 10, "another plugin keeps its manifest size");
+        resize_to(&mut app, &log.region_id, 6);
+        request(&mut app, Method::RegionClose(target(&log.region_id)));
+        request(&mut app, Method::RegionClose(target(&board.region_id)));
+
+        let board = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        let log = open_board(&mut app, open_params(BOTTOM_PLUGIN, "log"));
+        assert_eq!((board.size, log.size), (22, 6));
+        cleanup(app, &[right_root, bottom_root]);
+    }
+
+    #[tokio::test]
+    async fn session_save_captures_and_restore_reapplies_remembered_sizes() {
+        let mut app = test_app();
+        let root = link_board(&mut app);
+        let board = open_board(&mut app, open_params(BOARD_PLUGIN, "board"));
+        resize_to(&mut app, &board.region_id, 22);
+        request(&mut app, Method::RegionClose(target(&board.region_id)));
+
+        let sizes = crate::persist::capture_region_sizes(&app.state.regions);
+        assert_eq!(
+            sizes,
+            vec![crate::persist::RegionSizeSnapshot {
+                plugin_id: BOARD_PLUGIN.into(),
+                entrypoint: "board".into(),
+                size: 22,
+            }]
+        );
+        assert!(crate::persist::capture_regions(&app.state.regions).is_empty());
+        cleanup(app, &[root]);
+
+        let mut restored = test_app();
+        let root = link_board(&mut restored);
+        restored.restore_region_sizes(&sizes);
+        let reopened = open_board(&mut restored, open_params(BOARD_PLUGIN, "board"));
+        assert_eq!(reopened.size, 22);
+        cleanup(restored, &[root]);
+    }
+
     fn bottom_board_manifest() -> String {
         format!(
             r#"
