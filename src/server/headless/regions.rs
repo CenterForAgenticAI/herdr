@@ -144,9 +144,9 @@ impl HeadlessServer {
         changed
     }
 
-    /// Send changed region projections and frames to every region-capable shell. Frames use
-    /// the render slot, so a slow client keeps at most one pending frame and catches up when
-    /// its writer drains.
+    /// Send changed region projections and frames to every region-capable shell. Each region
+    /// keeps at most one pending frame per client beside the pane render slot, so a busy pane
+    /// cannot starve a region and a slow client never builds lag.
     pub(super) fn stream_region_surfaces(&mut self) {
         let recipients = self
             .clients
@@ -212,8 +212,16 @@ impl HeadlessServer {
                     .iter()
                     .any(|region| &region.region_id == region_id)
             };
+            // The client drops the surface of a region it is told is hidden, so a region shown
+            // again needs a fresh frame even when its content did not change.
+            let shown = |region_id: &String| {
+                current
+                    .regions
+                    .iter()
+                    .any(|region| &region.region_id == region_id && region.visible)
+            };
             stream.viewports.retain(|region_id, _| live(region_id));
-            stream.sent_frames.retain(|region_id, _| live(region_id));
+            stream.sent_frames.retain(|region_id, _| shown(region_id));
             stream.sent_projection = Some(current.clone());
         }
 
@@ -280,14 +288,16 @@ impl HeadlessServer {
                 let Some(writer) = client.writer.as_ref() else {
                     continue;
                 };
-                match writer.render.try_send(framed.clone()) {
-                    Ok(()) => {
-                        if let Some(stream) = client.shell_regions.as_mut() {
-                            stream.sent_frames.insert(region_id.to_owned(), key);
-                        }
-                    }
-                    Err(std::sync::mpsc::TrySendError::Full(_)) => client.defer_full_render(),
-                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => broken.push(client_id),
+                if writer
+                    .render
+                    .send_region(region_id, framed.clone())
+                    .is_err()
+                {
+                    broken.push(client_id);
+                    continue;
+                }
+                if let Some(stream) = client.shell_regions.as_mut() {
+                    stream.sent_frames.insert(region_id.to_owned(), key);
                 }
             }
         }
