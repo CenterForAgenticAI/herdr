@@ -9,7 +9,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
-pub(super) const SNAPSHOT_VERSION: u32 = 4;
+pub(super) const SNAPSHOT_VERSION: u32 = 3;
 
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
@@ -27,6 +27,7 @@ pub struct SessionSnapshot {
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
     /// Desktop regions to reopen on restore. Metadata only: no screen or process state.
+    /// Additive within version 3: older readers ignore the field and keep the session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<RegionSnapshot>,
 }
@@ -878,14 +879,16 @@ mod tests {
     }
 
     #[test]
-    fn v4_regions_round_trip_through_json() {
+    fn regions_round_trip_without_a_version_bump() {
         let mut snap = capture_from_state(&state_with_workspaces(&["regions"]));
         snap.regions = vec![region_snapshot("example.board", 44, false)];
 
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
 
-        assert_eq!(restored.version, 4);
+        // Herdr releases that predate regions refuse any snapshot newer than version 3 and
+        // drop the whole session, so regions stay an additive version-3 field.
+        assert_eq!(restored.version, 3);
         assert_eq!(
             restored.regions,
             vec![region_snapshot("example.board", 44, false)]
