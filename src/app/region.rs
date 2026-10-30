@@ -238,6 +238,13 @@ impl App {
         self.render_notify.notify_one();
     }
 
+    /// Drop region focus that a pane focus change has superseded. Without this, focus would come
+    /// back to the region when pane focus later returned to the region's anchor pane. Runs before
+    /// each API request, internal event and client event.
+    pub(crate) fn release_superseded_region_focus(&mut self) {
+        self.state.reconcile_region_focus();
+    }
+
     /// Spawn a region terminal and claim its slot. Refuses an occupied slot without touching
     /// the occupant.
     pub(crate) fn open_region(
@@ -439,7 +446,7 @@ impl App {
             return Err(RegionLookupError::Hidden);
         }
         let id = region.region_id.clone();
-        let changed = self.state.region_focus.as_ref() != Some(&id);
+        let changed = self.state.effective_region_focus() != Some(&id);
         self.focus_region_unchecked(id);
         let info = self
             .state
