@@ -76,7 +76,11 @@ fn spawn_herdr(config_home: &Path, runtime_dir: &Path, socket_path: &Path) -> Sp
     cmd.env("XDG_CONFIG_HOME", config_home);
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
     cmd.env("HERDR_SOCKET_PATH", socket_path);
-    cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
+    // Live handoff needs a client socket path the replacement server can rebind.
+    cmd.env(
+        "HERDR_CLIENT_SOCKET_PATH",
+        runtime_dir.join("herdr-client.sock"),
+    );
     cmd.env("SHELL", "/bin/sh");
     cmd.env_remove("HERDR_ENV");
     let child = pair.slave.spawn_command(cmd).unwrap();
@@ -259,5 +263,115 @@ fn fixture_region_survives_tab_changes_and_closes_when_plugin_is_disabled() {
     );
 
     drop(server);
+    cleanup_test_base(&base);
+}
+
+/// Workspace, linked fixture plugin, and one region resized to 41 and hidden.
+fn open_hidden_region(socket_path: &Path, base: &Path, plugin_dir: &Path) {
+    result(request(
+        socket_path,
+        "workspace.create",
+        serde_json::json!({"cwd": base.display().to_string(), "focus": true}),
+    ));
+    result(request(
+        socket_path,
+        "plugin.link",
+        serde_json::json!({"path": plugin_dir.display().to_string(), "enabled": true}),
+    ));
+    let opened = result(request(
+        socket_path,
+        "region.open",
+        serde_json::json!({"plugin_id": PLUGIN_ID, "entrypoint": "board"}),
+    ));
+    let region_id = opened["region"]["region_id"].as_str().expect("region id");
+    result(request(
+        socket_path,
+        "region.resize",
+        serde_json::json!({"region_id": region_id, "size": 41}),
+    ));
+    result(request(
+        socket_path,
+        "region.hide",
+        serde_json::json!({"region_id": region_id}),
+    ));
+}
+
+/// The one region the server reports, as (entrypoint, size, visible).
+fn only_region(socket_path: &Path) -> (String, u64, bool) {
+    let regions = region_list(socket_path);
+    assert_eq!(regions.len(), 1, "{regions:?}");
+    let region = &regions[0];
+    assert_eq!(region["plugin_id"], PLUGIN_ID, "{region}");
+    (
+        region["entrypoint"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        region["size"].as_u64().unwrap_or_default(),
+        region["visible"].as_bool().unwrap_or(true),
+    )
+}
+
+#[test]
+fn region_reopens_after_server_restart_with_saved_size_and_visibility() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+    let plugin_dir = stage_fixture(&base);
+
+    let server = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    open_hidden_region(&socket_path, &base, &plugin_dir);
+
+    // server.stop saves the session; dropping the handle waits for the process to exit.
+    result(request(&socket_path, "server.stop", serde_json::json!({})));
+    drop(server);
+    let _ = fs::remove_file(&socket_path);
+
+    let restarted = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    assert_eq!(
+        only_region(&socket_path),
+        ("board".to_string(), 41, false),
+        "restart must reopen the saved region"
+    );
+
+    drop(restarted);
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn region_survives_live_handoff_with_saved_size_and_visibility() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+    let plugin_dir = stage_fixture(&base);
+
+    let server = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    open_hidden_region(&socket_path, &base, &plugin_dir);
+    let old_pid = server.child.process_id().expect("server pid");
+
+    result(request(
+        &socket_path,
+        "server.live_handoff",
+        serde_json::json!({}),
+    ));
+    // Dropping the old server's handle waits for it to exit; the replacement keeps the socket.
+    drop(server);
+    assert!(
+        !process_alive(old_pid),
+        "the old server must exit after handoff"
+    );
+    wait_for_socket(&socket_path, Duration::from_secs(10));
+    assert_eq!(
+        only_region(&socket_path),
+        ("board".to_string(), 41, false),
+        "handoff must carry the region"
+    );
+
+    let _ = request(&socket_path, "server.stop", serde_json::json!({}));
     cleanup_test_base(&base);
 }
