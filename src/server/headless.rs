@@ -492,6 +492,7 @@ impl HeadlessServer {
             }
 
             self.app.sync_focus_events();
+            self.app.release_superseded_region_focus();
             self.app.sync_session_save_schedule();
 
             // 4. Accept new client connections.
@@ -2681,6 +2682,7 @@ impl HeadlessServer {
     }
 
     fn handle_server_event_with_render_impact(&mut self, ev: ServerEvent) -> RenderImpact {
+        self.app.release_superseded_region_focus();
         if self.handle_server_event(ev) {
             RenderImpact::Full
         } else {

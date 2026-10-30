@@ -302,6 +302,7 @@ impl HeadlessServer {
         if self.host_shutdown_requested() {
             return false;
         }
+        self.app.release_superseded_region_focus();
         let focus_response = match &mut ev {
             AppEvent::WorktreeAddFinished(result) => result
                 .api_request
