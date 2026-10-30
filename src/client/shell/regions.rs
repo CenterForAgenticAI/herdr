@@ -407,8 +407,18 @@ impl ClientShellState {
         true
     }
 
-    /// Follow a border drag: the region spans from the pointer to its fixed far edge.
+    /// Follow a border drag: the region spans from the pointer to its fixed far edge. The drag
+    /// stops where the tab area reaches its minimum, so the region never hides mid-drag.
     pub(super) fn drag_region_border(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
+        // The tab area's near side does not depend on this region's size: the right region
+        // takes columns after the sidebar, the bottom region takes rows below the tab bar.
+        let tab_origin = self.last_composed_size.map(|(cols, rows)| {
+            let layout = self.layout(cols, rows);
+            (
+                layout.pane_surface.x,
+                layout.tab_bar.y.min(layout.pane_surface.y),
+            )
+        });
         let Some(ClientChromeDrag::RegionBorder {
             region_id,
             edge,
@@ -418,11 +428,17 @@ impl ClientShellState {
         else {
             return;
         };
-        let pointer = match edge {
-            RegionEdge::Right => mouse.column,
-            RegionEdge::Bottom => mouse.row,
+        let edge = *edge;
+        let (pointer, near_side) = match (edge, tab_origin) {
+            (RegionEdge::Right, origin) => (mouse.column, origin.map(|(x, _)| x)),
+            (RegionEdge::Bottom, origin) => (mouse.row, origin.map(|(_, y)| y)),
         };
-        let size = far_edge.saturating_sub(pointer).max(1);
+        let mut size = far_edge.saturating_sub(pointer);
+        if let Some(near_side) = near_side {
+            let span = far_edge.saturating_sub(near_side);
+            size = size.min(crate::region::max_region_size_in(edge, span));
+        }
+        let size = size.max(1);
         if *last_sent == Some(size) {
             return;
         }

@@ -703,6 +703,103 @@ fn dragging_the_top_border_of_a_bottom_region_requests_a_resize() {
     assert!(state.chrome_drag.is_none());
 }
 
+fn drag_border_to(state: &mut ClientShellState, column: u16, row: u16) -> u32 {
+    let drag = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        column,
+        row,
+    )]);
+    let methods = endpoint_methods(&drag);
+    let [crate::api::schema::Method::RegionResize(params)] = &methods[..] else {
+        panic!("expected one resize: {methods:?}");
+    };
+    params.size
+}
+
+fn shown_after_resize(state: &mut ClientShellState, revision: u64, region: ClientRegion) -> bool {
+    let edge = if region.edge == "bottom" {
+        crate::region::RegionEdge::Bottom
+    } else {
+        crate::region::RegionEdge::Right
+    };
+    state.set_endpoint_region_projection(
+        &ClientEndpointId::Local,
+        projection(revision, vec![region]),
+    );
+    !state.layout(106, 30).region(edge).is_empty()
+}
+
+// A drag past the tab area's minimum stops there instead of asking for a size the layout
+// would hide, which made the region vanish under the pointer in a narrow window.
+#[test]
+fn dragging_a_right_border_stops_at_the_tab_area_minimum() {
+    let mut state = shell_with_region(30, true, false);
+    state.compose(106, 30).expect("frame");
+    let outer = state
+        .hits
+        .regions
+        .first()
+        .cloned()
+        .expect("region hit")
+        .outer;
+    let far_edge = outer.x + outer.width;
+    let tab_x = state.layout(106, 30).pane_surface.x;
+    let widest = far_edge - tab_x - crate::region::MIN_TAB_SURFACE_WIDTH;
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        outer.x,
+        5,
+    )]);
+
+    assert_eq!(drag_border_to(&mut state, tab_x + 2, 5), u32::from(widest));
+    assert!(shown_after_resize(
+        &mut state,
+        2,
+        region(widest, true, false)
+    ));
+    assert!(
+        !shown_after_resize(&mut state, 3, region(widest + 1, true, false)),
+        "one cell wider hides the region, so the cap sits exactly at the limit"
+    );
+}
+
+#[test]
+fn dragging_a_bottom_border_stops_at_the_tab_area_minimum() {
+    let mut state = shell_with_regions(vec![bottom_region(8, true, false)]);
+    state.compose(106, 30).expect("frame");
+    let outer = state
+        .hits
+        .regions
+        .first()
+        .cloned()
+        .expect("region hit")
+        .outer;
+    let far_edge = outer.y + outer.height;
+    let layout = state.layout(106, 30);
+    let tab_top = layout.tab_bar.y.min(layout.pane_surface.y);
+    let tallest = far_edge - tab_top - crate::region::MIN_TAB_SURFACE_HEIGHT;
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        outer.x + 5,
+        outer.y,
+    )]);
+
+    assert_eq!(
+        drag_border_to(&mut state, outer.x + 5, 0),
+        u32::from(tallest)
+    );
+    assert!(shown_after_resize(
+        &mut state,
+        2,
+        bottom_region(tallest, true, false)
+    ));
+    assert!(!shown_after_resize(
+        &mut state,
+        3,
+        bottom_region(tallest + 1, true, false)
+    ));
+}
+
 #[test]
 fn bottom_region_bindings_target_only_the_bottom_region() {
     let mut state =
