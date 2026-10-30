@@ -199,6 +199,7 @@ mod tests {
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
             regions: Vec::new(),
+            region_sizes: Vec::new(),
         }
     }
 

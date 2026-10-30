@@ -5,7 +5,7 @@ use super::{App, SESSION_SAVE_DEBOUNCE};
 enum SessionSaveJob {
     Clear,
     Save {
-        snapshot: crate::persist::SessionSnapshot,
+        snapshot: Box<crate::persist::SessionSnapshot>,
         history: Option<crate::persist::SessionHistorySnapshot>,
     },
 }
@@ -49,6 +49,7 @@ impl App {
                 self.state.selected,
             );
             snapshot.regions = crate::persist::capture_regions(&self.state.regions);
+            snapshot.region_sizes = crate::persist::capture_region_sizes(&self.state.regions);
             let history = self.persist_pane_history.then(|| {
                 crate::persist::capture_history(
                     &snapshot,
@@ -56,7 +57,10 @@ impl App {
                     &self.terminal_runtimes,
                 )
             });
-            SessionSaveJob::Save { snapshot, history }
+            SessionSaveJob::Save {
+                snapshot: Box::new(snapshot),
+                history,
+            }
         }
     }
 

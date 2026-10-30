@@ -186,8 +186,12 @@ impl AppState {
             RegionEdge::Right => self.regions_config.right.size,
             RegionEdge::Bottom => self.regions_config.bottom.size,
         };
+        let remembered = self
+            .regions
+            .remembered_size(&launch.plugin_id, &launch.entrypoint);
         let size = launch
             .requested_size
+            .or(remembered.map(u32::from))
             .or(configured.map(u32::from))
             .or(launch.manifest_size.map(u32::from))
             .unwrap_or(u32::from(DEFAULT_REGION_SIZE));
@@ -479,10 +483,18 @@ impl App {
         let applied = clamp_requested_size(region.bounds, size);
         let changed = region.size != applied;
         region.size = applied;
+        let (plugin_id, entrypoint) = (region.plugin_id.clone(), region.entrypoint.clone());
+        let remembered = self
+            .state
+            .regions
+            .remember_size(&plugin_id, &entrypoint, applied);
         let info = self
             .state
             .region_info_by_id(region_id)
             .ok_or(RegionLookupError::NotFound)?;
+        if !changed && remembered {
+            self.state.mark_session_dirty();
+        }
         if changed {
             self.region_changed();
             self.emit_region_event(
@@ -560,6 +572,14 @@ impl App {
     /// current manifest, so a plugin that is gone, disabled or no longer declares the
     /// entrypoint drops its region. Restored regions keep their size (clamped to the current
     /// bounds) and visibility, and are never focused.
+    pub(crate) fn restore_region_sizes(&mut self, sizes: &[crate::persist::RegionSizeSnapshot]) {
+        for entry in sizes {
+            self.state
+                .regions
+                .remember_size(&entry.plugin_id, &entry.entrypoint, entry.size);
+        }
+    }
+
     pub(crate) fn restore_regions(&mut self, snapshots: &[crate::persist::RegionSnapshot]) {
         for snapshot in snapshots {
             let launch = match self.resolve_region_launch(

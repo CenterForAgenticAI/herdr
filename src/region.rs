@@ -208,6 +208,8 @@ pub(crate) struct RegionSlotOccupied {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RegionState {
     session: BTreeMap<RegionEdge, RegionInstance>,
+    /// Size each (plugin, entrypoint) was last resized to, so a closed region reopens there.
+    remembered_sizes: BTreeMap<(String, String), u16>,
 }
 
 impl RegionState {
@@ -231,6 +233,25 @@ impl RegionState {
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &RegionInstance> {
         self.session.values()
+    }
+
+    /// Size this plugin entrypoint's region was last resized to. Callers clamp it.
+    pub(crate) fn remembered_size(&self, plugin_id: &str, entrypoint: &str) -> Option<u16> {
+        self.remembered_sizes
+            .get(&(plugin_id.to_owned(), entrypoint.to_owned()))
+            .copied()
+    }
+
+    /// Record a resized size. Returns whether the remembered value changed.
+    pub(crate) fn remember_size(&mut self, plugin_id: &str, entrypoint: &str, size: u16) -> bool {
+        let key = (plugin_id.to_owned(), entrypoint.to_owned());
+        self.remembered_sizes.insert(key, size) != Some(size)
+    }
+
+    pub(crate) fn remembered_sizes(&self) -> impl Iterator<Item = (&str, &str, u16)> {
+        self.remembered_sizes
+            .iter()
+            .map(|((plugin_id, entrypoint), size)| (plugin_id.as_str(), entrypoint.as_str(), *size))
     }
 
     pub(crate) fn get(&self, edge: RegionEdge) -> Option<&RegionInstance> {
