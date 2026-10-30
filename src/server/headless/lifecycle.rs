@@ -79,6 +79,7 @@ impl HeadlessServer {
         // Region PTYs are not transferred: the old server drops them below and the
         // replacement respawns each region from this metadata.
         snapshot.regions = crate::persist::capture_regions(&self.app.state.regions);
+        snapshot.region_sizes = crate::persist::capture_region_sizes(&self.app.state.regions);
 
         let mut handoff_entries = Vec::new();
         for (terminal_id, runtime) in self.app.terminal_runtimes.iter() {
