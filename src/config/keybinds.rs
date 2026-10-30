@@ -403,6 +403,7 @@ pub struct Keybinds {
     pub resize_pane_up: ActionKeybinds,
     pub resize_pane_right: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
+    // rbtrial: planted upstream line beside the sidebar binding.
     pub toggle_region: ActionKeybinds,
     pub focus_region: ActionKeybinds,
     pub toggle_bottom_region: ActionKeybinds,
@@ -590,6 +591,7 @@ impl Config {
             resize_pane_up: empty_action!(),
             resize_pane_right: empty_action!(),
             toggle_sidebar: empty_action!(),
+            // rbtrial: planted upstream line beside the sidebar default.
             toggle_region: empty_action!(),
             focus_region: empty_action!(),
             toggle_bottom_region: empty_action!(),
