@@ -4,15 +4,23 @@ use super::*;
 
 use crate::protocol::region_surface;
 
-fn connect_shell(
-    server: &mut HeadlessServer,
-    client_id: u64,
-    regions: bool,
-) -> (
-    std::sync::mpsc::Receiver<Vec<u8>>,
-    std::sync::mpsc::Receiver<Vec<u8>>,
-) {
-    let (writer, control, render) = test_client_writer();
+/// One lane of a paused client writer. Reading a lane takes what the writer thread would
+/// send next, without a thread, so frames queued beside an occupied slot stay observable.
+struct Lane {
+    writer: ClientWriter,
+    render: bool,
+}
+
+fn connect_shell(server: &mut HeadlessServer, client_id: u64, regions: bool) -> (Lane, Lane) {
+    let writer = ClientWriter::test_paused();
+    let control = Lane {
+        writer: writer.clone(),
+        render: false,
+    };
+    let render = Lane {
+        writer: writer.clone(),
+        render: true,
+    };
     assert!(
         server.handle_server_event(ServerEvent::ClientShellConnected {
             surface_reuse: false,
@@ -35,9 +43,14 @@ fn connect_shell(
     (control, render)
 }
 
-fn drain(receiver: &std::sync::mpsc::Receiver<Vec<u8>>) -> Vec<ServerMessage> {
+fn drain(lane: &Lane) -> Vec<ServerMessage> {
+    let batches = if lane.render {
+        lane.writer.test_drain_render()
+    } else {
+        lane.writer.test_drain_control()
+    };
     let mut messages = Vec::new();
-    while let Ok(bytes) = receiver.try_recv() {
+    for bytes in batches {
         let len = bytes.len() as u64;
         let mut cursor = std::io::Cursor::new(bytes);
         while cursor.position() < len {
@@ -146,8 +159,8 @@ async fn region_capable_shell_receives_projection_and_frame() {
     );
     let (control, render) = connect_shell(&mut server, 7, true);
 
+    // A full render streams regions too, beside the pane frame.
     server.render_and_stream();
-    let _ = drain(&render);
     server.stream_region_surfaces();
 
     let projections = region_controls(&drain(&control))
@@ -170,6 +183,70 @@ async fn region_capable_shell_receives_projection_and_frame() {
     server.stream_region_surfaces();
     assert!(region_controls(&drain(&control)).is_empty());
     assert!(region_surfaces(&drain(&render)).is_empty());
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn region_frame_is_delivered_while_the_pane_frame_holds_the_render_slot() {
+    let mut server = test_headless_server();
+    install_shared_view_test_runtime(&mut server);
+    let region_id = server.app.install_test_region(
+        "plugin.board",
+        crate::terminal::TerminalRuntime::test_with_screen_bytes(30, 10, b"REGION_LIVE"),
+    );
+    let (_control, render) = connect_shell(&mut server, 7, true);
+
+    // The pane frame stays queued: the writer has not drained the render slot yet.
+    server.render_and_stream();
+    server.stream_region_surfaces();
+
+    let messages = drain(&render);
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, ServerMessage::PaneSurface(_))),
+        "pane frame still queued"
+    );
+    let surfaces = region_surfaces(&messages);
+    assert_eq!(
+        surfaces.len(),
+        1,
+        "region frame queued beside the pane frame"
+    );
+    assert_eq!(surfaces[0].region_id, region_id.as_str());
+    assert!(frame_text(&surfaces[0].frame).contains("REGION_LIVE"));
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn region_shown_again_is_resent_without_new_output() {
+    let mut server = test_headless_server();
+    install_shared_view_test_runtime(&mut server);
+    let region_id = server.app.install_test_region(
+        "plugin.board",
+        crate::terminal::TerminalRuntime::test_with_screen_bytes(30, 10, b"REGION_LIVE"),
+    );
+    let (control, render) = connect_shell(&mut server, 7, true);
+    server.render_and_stream();
+    server.stream_region_surfaces();
+    assert_eq!(region_surfaces(&drain(&render)).len(), 1);
+
+    server
+        .app
+        .set_region_visible(region_id.as_str(), false)
+        .expect("hide region");
+    server.stream_region_surfaces();
+    assert!(region_surfaces(&drain(&render)).is_empty());
+
+    server
+        .app
+        .set_region_visible(region_id.as_str(), true)
+        .expect("show region");
+    server.stream_region_surfaces();
+    let _ = drain(&control);
+    let surfaces = region_surfaces(&drain(&render));
+    assert_eq!(surfaces.len(), 1, "shown region gets a fresh frame");
+    assert!(frame_text(&surfaces[0].frame).contains("REGION_LIVE"));
     shutdown_test_runtimes(&mut server);
 }
 

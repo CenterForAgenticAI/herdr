@@ -132,7 +132,7 @@ impl ClientWriter {
         self.render.queue.discard_pending_render();
     }
 
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     pub(crate) fn test_paused() -> Self {
         let queue = ClientWriterQueue::new();
         Self {
@@ -146,6 +146,24 @@ impl ClientWriter {
         let mut state = self.render.queue.lock_state();
         let mut frames = state.control.drain(..).collect::<Vec<_>>();
         frames.extend(state.ordered.drain(..));
+        frames.extend(state.regions.drain(..).map(|(_, data)| data));
+        frames.extend(state.render.take());
+        frames
+    }
+
+    /// Takes queued control messages without a writer thread.
+    #[cfg(test)]
+    pub(crate) fn test_drain_control(&self) -> Vec<Vec<u8>> {
+        let mut state = self.render.queue.lock_state();
+        state.control.drain(..).collect()
+    }
+
+    /// Takes queued render-lane messages in the order the writer would send them.
+    #[cfg(test)]
+    pub(crate) fn test_drain_render(&self) -> Vec<Vec<u8>> {
+        let mut state = self.render.queue.lock_state();
+        let mut frames = state.ordered.drain(..).collect::<Vec<_>>();
+        frames.extend(state.regions.drain(..).map(|(_, data)| data));
         frames.extend(state.render.take());
         frames
     }
@@ -262,6 +280,16 @@ impl ClientRenderWriter {
     pub(crate) fn send_ordered(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
         self.queue.send_ordered(data)
     }
+
+    /// Queues the newest full frame of one region. Each region keeps at most one pending
+    /// frame, and region frames never compete with the pane frame for the render slot.
+    pub(crate) fn send_region(
+        &self,
+        region_id: &str,
+        data: Vec<u8>,
+    ) -> Result<(), SendError<Vec<u8>>> {
+        self.queue.send_region(region_id, data)
+    }
 }
 
 #[derive(Debug)]
@@ -274,6 +302,8 @@ struct ClientWriterQueue {
 struct ClientWriterQueueState {
     control: VecDeque<Vec<u8>>,
     ordered: VecDeque<Vec<u8>>,
+    /// Newest pending full frame per region, keyed by region id.
+    regions: VecDeque<(String, Vec<u8>)>,
     render: Option<Vec<u8>>,
     senders: usize,
     writer_alive: bool,
@@ -334,7 +364,22 @@ impl ClientWriterQueue {
         let mut state = self.lock_state();
         state.render = None;
         state.ordered.clear();
+        state.regions.clear();
         self.ready.notify_all();
+    }
+
+    fn send_region(&self, region_id: &str, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
+        let mut state = self.lock_state();
+        if !state.writer_alive {
+            return Err(SendError(data));
+        }
+        if let Some((_, pending)) = state.regions.iter_mut().find(|(id, _)| id == region_id) {
+            *pending = data;
+        } else {
+            state.regions.push_back((region_id.to_owned(), data));
+        }
+        self.ready.notify_one();
+        Ok(())
     }
 
     fn send_ordered(&self, data: Vec<u8>) -> Result<(), TrySendError<Vec<u8>>> {
@@ -363,6 +408,9 @@ impl ClientWriterQueue {
                 self.ready.notify_one();
                 return Some(ClientWriteItem::Render(data));
             }
+            if let Some((_, data)) = state.regions.pop_front() {
+                return Some(ClientWriteItem::Render(data));
+            }
             if let Some(data) = state.render.take() {
                 return Some(ClientWriteItem::Render(data));
             }
@@ -381,6 +429,7 @@ impl ClientWriterQueue {
         state.writer_alive = false;
         state.render = None;
         state.ordered.clear();
+        state.regions.clear();
         self.ready.notify_all();
     }
 
@@ -1597,6 +1646,48 @@ mod tests {
             writer.render.send_ordered(b"closed".to_vec()),
             Err(TrySendError::Disconnected(_))
         ));
+    }
+
+    #[test]
+    fn region_frames_keep_the_newest_per_region_beside_an_occupied_render_slot() {
+        let (writer, queue) = test_queue_writer();
+        writer.render.try_send(b"pane".to_vec()).unwrap();
+        writer
+            .render
+            .send_region("right", b"right-old".to_vec())
+            .unwrap();
+        writer
+            .render
+            .send_region("bottom", b"bottom".to_vec())
+            .unwrap();
+        writer
+            .render
+            .send_region("right", b"right-new".to_vec())
+            .unwrap();
+
+        for expected in [b"right-new".as_slice(), b"bottom", b"pane"] {
+            assert_eq!(
+                queue.recv(),
+                Some(ClientWriteItem::Render(expected.to_vec()))
+            );
+        }
+
+        writer
+            .render
+            .send_region("right", b"dropped".to_vec())
+            .unwrap();
+        writer.discard_pending_render();
+        writer.render.try_send(b"after".to_vec()).unwrap();
+        assert_eq!(
+            queue.recv(),
+            Some(ClientWriteItem::Render(b"after".to_vec()))
+        );
+
+        queue.close_writer();
+        assert!(writer
+            .render
+            .send_region("right", b"closed".to_vec())
+            .is_err());
     }
 
     #[test]
