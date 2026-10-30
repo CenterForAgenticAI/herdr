@@ -185,14 +185,6 @@ impl App {
                     context.focused_pane_id = Some(pane_id.clone());
                     context
                 }),
-            // Desktop regions are session-level, not tied to one workspace or tab.
-            EventData::RegionOpened { .. }
-            | EventData::RegionClosed { .. }
-            | EventData::RegionFocused { .. }
-            | EventData::RegionResized { .. }
-            | EventData::RegionVisibilityChanged { .. } => {
-                self.current_plugin_context(correlation_id)
-            }
         }
     }
 

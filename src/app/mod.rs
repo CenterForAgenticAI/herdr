@@ -20,7 +20,6 @@ mod custom_commands;
 mod git_refresh;
 mod ids;
 mod popup;
-mod region;
 mod runtime;
 mod session;
 pub mod state;
@@ -426,10 +425,6 @@ impl App {
         let session_writer = Arc::new(std::sync::Mutex::new(crate::persist::SessionWriter::new(
             policy.restore_session && snapshot.is_none(),
         )));
-        let restored_regions = snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.regions.clone())
-            .unwrap_or_default();
         let (workspaces, active, selected) = if let Some(snap) = snapshot {
             let history = config
                 .experimental
@@ -576,10 +571,6 @@ impl App {
             ),
             plugin_panes: std::collections::HashMap::new(),
             popup_pane: None,
-            regions: crate::region::RegionState::default(),
-            region_focus: None,
-            region_focus_anchor: None,
-            regions_config: config.ui.regions.clone(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
@@ -702,7 +693,6 @@ impl App {
         app.configure_tab_bar_status(&config.ui.tab_bar_right, &config.ui.tab_bar_right_separator);
         app.configure_window_title(&config.ui.window_title);
         app.refresh_restored_workspace_git_metadata();
-        app.restore_regions(&restored_regions);
         Ok(app)
     }
 
@@ -766,7 +756,6 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
         app.refresh_restored_workspace_git_metadata();
-        app.restore_regions(&snapshot.regions);
         Ok(app)
     }
 
@@ -938,7 +927,6 @@ impl App {
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
                 self.state.sound = config.ui.sound.clone();
                 self.state.toast_config = config.ui.toast.clone();
-                self.state.regions_config = config.ui.regions.clone();
             }
         }
 

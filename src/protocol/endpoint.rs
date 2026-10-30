@@ -64,9 +64,6 @@ pub struct EndpointClientHello {
     /// Accept the optional scroll-aware patch encoding on this connection.
     #[serde(default)]
     pub surface_scroll: bool,
-    /// Accept desktop-region projections and surfaces on this connection.
-    #[serde(default)]
-    pub regions: bool,
     #[serde(default)]
     pub snapshot_codecs: Vec<String>,
     #[serde(default)]
@@ -177,7 +174,6 @@ impl EndpointServerWelcome {
                 HEALTH_CHECK_CAPABILITY.into(),
                 AGENT_VIEW_PROJECTION_CAPABILITY.into(),
                 AGENT_COMPLETIONS_CAPABILITY.into(),
-                super::region_surface::CAPABILITY.into(),
             ],
             error: None,
         }
@@ -219,7 +215,6 @@ mod tests {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             snapshot_codecs: vec![SNAPSHOT_CODEC_V1.into()],
             surface_codecs: vec![SURFACE_CODEC_V1.into()],
             input_codecs: vec![INPUT_CODEC_V1.into()],
@@ -369,13 +364,11 @@ mod tests {
         value.as_object_mut().unwrap().remove("surface_reuse");
         value.as_object_mut().unwrap().remove("surface_delta");
         value.as_object_mut().unwrap().remove("surface_scroll");
-        value.as_object_mut().unwrap().remove("regions");
         let decoded: EndpointClientHello = serde_json::from_value(value).unwrap();
         assert!(decoded.surface_active);
         assert!(!decoded.surface_reuse);
         assert!(!decoded.surface_delta);
         assert!(!decoded.surface_scroll);
-        assert!(!decoded.regions);
     }
 
     #[test]
@@ -392,7 +385,6 @@ mod tests {
                 HEALTH_CHECK_CAPABILITY.to_string(),
                 AGENT_VIEW_PROJECTION_CAPABILITY.to_string(),
                 AGENT_COMPLETIONS_CAPABILITY.to_string(),
-                super::super::region_surface::CAPABILITY.to_string(),
             ]
         );
     }

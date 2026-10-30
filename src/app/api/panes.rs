@@ -497,7 +497,6 @@ impl App {
         };
 
         self.state.focus_pane_in_workspace(ws_idx, pane_id);
-        self.state.clear_region_focus();
         self.state.mark_active_tab_seen();
         self.state.mode = crate::app::Mode::Terminal;
 
@@ -691,7 +690,6 @@ impl App {
         if let Some(target_pane_id) = target {
             self.state.focus_pane_in_workspace(ws_idx, target_pane_id);
             self.state.switch_workspace_tab(ws_idx, tab_idx);
-            self.state.clear_region_focus();
             self.state.mode = crate::app::Mode::Terminal;
         }
         let focused_pane_id = self

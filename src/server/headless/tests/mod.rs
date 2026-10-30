@@ -4,8 +4,6 @@ mod event_fairness;
 mod native_graphics;
 #[path = "pane_move.rs"]
 mod pane_move_tests;
-#[path = "regions.rs"]
-mod region_tests;
 #[path = "pane_graphics.rs"]
 mod retained_graphics_tests;
 #[path = "surface_delta.rs"]
@@ -731,7 +729,6 @@ async fn client_shell_attach_seeds_workspace() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 6,
             surface_cols: 80,
             surface_rows: 23,
@@ -775,7 +772,6 @@ async fn completion_guard_endpoint_pairs_runtime_completions_with_snapshots() {
         surface_reuse: false,
         surface_delta: false,
         surface_scroll: false,
-        regions: false,
         writer,
     });
     let (_, initial) = client_shell_projection(&control_rx);
@@ -825,7 +821,6 @@ async fn client_shell_endpoint_request_uses_the_selected_connection() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id,
             surface_cols: 80,
             surface_rows: 23,
@@ -945,7 +940,6 @@ async fn client_shell_pairs_agent_view_set_replacement_and_clear_with_snapshots(
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 77,
             surface_cols: 80,
             surface_rows: 23,
@@ -1049,7 +1043,6 @@ async fn client_shell_receives_metadata_then_shell_free_pane_surface() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 7,
             surface_cols: 80,
             surface_rows: 23,
@@ -1218,7 +1211,6 @@ fn connect_test_shell(
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id,
             surface_cols,
             surface_rows,
@@ -1824,7 +1816,6 @@ async fn client_shell_config_diagnostics_follow_keybinding_ownership() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 13,
             surface_cols: 80,
             surface_rows: 23,
@@ -1850,7 +1841,6 @@ async fn client_shell_config_diagnostics_follow_keybinding_ownership() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 14,
             surface_cols: 80,
             surface_rows: 23,
@@ -2771,7 +2761,6 @@ async fn public_api_focus_replaces_every_client_shell_projection() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 9,
             surface_cols: 80,
             surface_rows: 23,
@@ -3019,7 +3008,6 @@ async fn client_shell_streams_and_targets_popup_terminal_content() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 12,
             surface_cols: 80,
             surface_rows: 23,
@@ -6567,7 +6555,6 @@ async fn client_shell_requests_host_pixels_for_an_unfocused_pixel_pane() {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             client_id: 7,
             surface_cols: 80,
             surface_rows: 23,

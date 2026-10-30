@@ -46,8 +46,7 @@ pub(super) fn command() -> Command {
         .subcommand(terminal_command())
         .subcommand(session_command())
         .subcommand(integration_command())
-        .subcommand(plugin_command())
-        .subcommand(region_command());
+        .subcommand(plugin_command());
     configure_help(command, 0)
 }
 
@@ -211,10 +210,6 @@ fn tab_command() -> Command {
 
 fn notification_command() -> Command {
     super::notification::command()
-}
-
-fn region_command() -> Command {
-    super::region::command()
 }
 
 fn agent_command() -> Command {

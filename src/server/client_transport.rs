@@ -419,7 +419,6 @@ pub(crate) enum ServerEvent {
         surface_reuse: bool,
         surface_delta: bool,
         surface_scroll: bool,
-        regions: bool,
         writer: ClientWriter,
     },
     /// A client sent an input message.
@@ -523,11 +522,6 @@ pub(crate) enum ServerEvent {
     ClientShellMouseCapture { client_id: u64, enabled: bool },
     /// The committed shell asks the server to replay presentation effects before input resumes.
     ClientShellPresentationSync { client_id: u64, token: String },
-    /// A region-capable shell reported the inner size it draws one region at.
-    ClientShellRegionViewport {
-        client_id: u64,
-        viewport: crate::protocol::region_surface::RegionViewport,
-    },
     /// A client-owned shell invoked one endpoint operation through this connection.
     ClientShellEndpointRequest {
         client_id: u64,
@@ -793,7 +787,6 @@ pub(crate) fn handle_client_handshake(
                     hello.surface_reuse,
                     hello.surface_delta,
                     hello.surface_scroll,
-                    hello.regions,
                 )),
             )
         }
@@ -891,7 +884,6 @@ pub(crate) fn handle_client_handshake(
         surface_reuse,
         surface_delta,
         surface_scroll,
-        regions,
     )) = shell_options
     {
         ServerEvent::ClientShellConnected {
@@ -908,7 +900,6 @@ pub(crate) fn handle_client_handshake(
             surface_reuse,
             surface_delta,
             surface_scroll,
-            regions,
             writer,
         }
     } else {
@@ -1355,18 +1346,6 @@ fn client_read_loop_with_endpoint_controls(
                     token: data,
                 }
             }
-            ClientMessage::EndpointControl { kind, data }
-                if kind == crate::protocol::region_surface::VIEWPORT_KIND =>
-            {
-                let Some(viewport) = crate::protocol::region_surface::decode_viewport(&data) else {
-                    debug!(client_id, "ignoring malformed region viewport");
-                    continue;
-                };
-                ServerEvent::ClientShellRegionViewport {
-                    client_id,
-                    viewport,
-                }
-            }
             ClientMessage::EndpointControl { kind, data } => {
                 let Some(response) = crate::server::client_endpoint_control::response(&kind, data)
                 else {
@@ -1498,7 +1477,6 @@ mod tests {
             surface_reuse: false,
             surface_delta: false,
             surface_scroll: false,
-            regions: false,
             snapshot_codecs: vec![crate::protocol::endpoint::SNAPSHOT_CODEC_V1.into()],
             surface_codecs: vec![crate::protocol::endpoint::SURFACE_CODEC_V1.into()],
             input_codecs: vec![crate::protocol::endpoint::INPUT_CODEC_V1.into()],
@@ -2050,10 +2028,8 @@ mod tests {
                 surface_reuse,
                 surface_delta,
                 surface_scroll,
-                regions,
                 writer,
             } => {
-                assert!(!regions);
                 assert!(!surface_reuse);
                 assert!(!surface_delta);
                 assert!(!surface_scroll);

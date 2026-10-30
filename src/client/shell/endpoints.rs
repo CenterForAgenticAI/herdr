@@ -22,7 +22,6 @@ pub(crate) struct ClientShellEndpoint {
     pending_agent_view_projection: Option<ClientEndpointAgentViewProjection>,
     pub(crate) agent_view_projection_supported: bool,
     pub(crate) methods: Option<HashSet<String>>,
-    pub(crate) regions: super::regions::ClientEndpointRegions,
 }
 
 pub(super) struct MachineHit {
@@ -89,9 +88,6 @@ impl ClientShellState {
                 agent_view_projection_supported: previous
                     .is_some_and(|endpoint| endpoint.agent_view_projection_supported),
                 methods: previous.and_then(|endpoint| endpoint.methods.clone()),
-                regions: previous
-                    .map(|endpoint| endpoint.regions.clone())
-                    .unwrap_or_default(),
             });
         }
 
@@ -137,7 +133,6 @@ impl ClientShellState {
             endpoint.agent_view_projection = None;
             endpoint.pending_agent_view_projection = None;
             endpoint.agent_view_projection_supported = false;
-            endpoint.regions = Default::default();
         }
     }
 
@@ -166,7 +161,6 @@ impl ClientShellState {
 
     pub(crate) fn mark_endpoint_disconnected(&mut self, endpoint_id: &ClientEndpointId) {
         self.set_endpoint_status(endpoint_id, ClientEndpointStatus::Reconnecting);
-        self.clear_endpoint_regions(endpoint_id);
         if endpoint_id == &self.active_endpoint_id {
             let pending = self.pending_requests.keys().cloned().collect::<Vec<_>>();
             for request_id in pending {
@@ -748,6 +742,5 @@ pub(super) fn local_endpoint() -> ClientShellEndpoint {
         pending_agent_view_projection: None,
         agent_view_projection_supported: false,
         methods: None,
-        regions: Default::default(),
     }
 }

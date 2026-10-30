@@ -81,13 +81,6 @@ title = "Project board"
 placement = "overlay"
 command = ["herdr-board"]
 
-[[regions]]
-id = "board"
-title = "Project board"
-edge = "right"
-size = 40
-command = ["herdr-board", "--compact"]
-
 [[link_handlers]]
 id = "github-issue"
 title = "Open GitHub issue"
@@ -101,13 +94,13 @@ action = "apply"
 或安装。`description` 可选。插件 id 可以使用 ASCII 字母、数字、点、
 冒号、下划线和连字符。
 
-动作 id、窗格 id、区域 id 和链接处理器 id 是插件内部的本地 id。它们可以使用
+动作 id、窗格 id 和链接处理器 id 是插件内部的本地 id。它们可以使用
 ASCII 字母、数字、冒号、下划线和连字符,但不能用点。每种 id 在插件内
 必须唯一。当需要全局唯一名称时,Herdr 会把动作 id 限定为
 `plugin.id.action` 的形式。
 
 用 `platforms = ["linux", "macos", "windows"]` 声明插件可以运行的平台。
-构建命令、启动钩子、动作、事件钩子、窗格、区域和链接处理器也可以声明自己的
+构建命令、启动钩子、动作、事件钩子、窗格和链接处理器也可以声明自己的
 `platforms`;条目级的 platforms 覆盖顶层列表。没有顶层 `platforms` 的本地
 插件在链接时会给出警告。
 
@@ -303,52 +296,6 @@ split、tab、zoomed 和 overlay 插件窗格打开后就是普通的 Herdr 窗�
 解析常见的 `PATHEXT` shim,比如 `npm.cmd`、`bun.cmd` 和 `pnpm.cmd`。
 窗格命令使用 Herdr 常规的 Windows 窗格启动器,仍然必须是有效的 Windows
 argv 命令。
-
-## 区域
-
-区域是位于客户端窗口一侧的终端条,不属于任何标签页。切换标签页或工作区时它
-保持原位,新标签页在它旁边打开。在清单中声明区域:
-
-```toml
-[[regions]]
-id = "board"
-title = "Project board"
-edge = "right"
-scope = "session"
-size = 40
-min_size = 24
-max_size = 80
-command = ["herdr-board", "--compact"]
-```
-
-`id`、`title` 和 `command` 是必填项。`edge` 为 `right`(默认)或 `bottom`。`scope` 只支持
-`session`,这也是默认值。`size`、`min_size` 和 `max_size` 以单元格计:右侧区域为宽度,
-底部区域为高度。默认分别为 32、8 和 200。一个插件对每个 `(edge, scope)` 槽位只能声明一次。
-
-用 `herdr region open PLUGIN_ID ENTRYPOINT` 或 `region.open` socket 方法打开区域。
-每个槽位同一时间只容纳一个区域;再打开第二个会返回 `region_slot_occupied`。
-请求的尺寸会被限制在清单范围内。右侧区域占满窗口高度。底部区域位于标签页区域下方,
-只占标签页区域的宽度,因此不会延伸到右侧区域下方。Herdr 为标签页区域保留至少 20 列
-和 6 行。区域会使其低于这个下限时,Herdr 在该帧中不绘制该区域,但不会停止其进程;
-窗口足够大后会重新绘制。每一侧单独判断,放不下的区域不会让另一侧的区域隐藏。
-
-区域不是 Herdr 窗格。它用 `region_id` 而不是窗格 ID 标识,不出现在 `pane.*`、
-layout 或智能体 API 中,其进程不会收到 `HERDR_PANE_ID`。它会收到其他插件变量,
-包括 `HERDR_PLUGIN_ID`、`HERDR_PLUGIN_ENTRYPOINT_ID` 和
-`HERDR_PLUGIN_CONTEXT_JSON`。隐藏区域时其进程继续运行。进程退出时区域关闭;
-插件被禁用或取消链接时,Herdr 会关闭其区域并停止进程。
-
-Herdr 会随会话保存打开的区域,并在恢复时重新启动它们。只保存插件 id、入口点、
-edge、scope、尺寸和可见性,不保存区域的终端内容。恢复的区域不会获得焦点;
-当插件缺失、已禁用或不再声明该区域时,Herdr 会跳过它。实时交接
-(`herdr update --handoff`)不会转移区域的进程:新服务器根据相同的已保存字段重新启动
-区域,因此区域中的程序会重新启动。
-
-用户可以在 `config.toml` 的 `[ui.regions.right]` 和 `[ui.regions.bottom]` 中关闭某一侧
-或设置尺寸。绑定 `keys.toggle_region` 和 `keys.focus_region` 可用键盘显示、隐藏和聚焦
-右侧区域,绑定 `keys.toggle_bottom_region` 和 `keys.focus_bottom_region` 则对应底部区域。
-四个绑定默认都未设置。使用鼠标时,点击区域即可聚焦,拖动其内侧边框可调整尺寸:
-右侧区域拖动左边框,底部区域拖动上边框。
 
 ## 按键绑定
 

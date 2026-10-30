@@ -11,8 +11,6 @@ pub(crate) enum EndpointControlMessage {
     AgentViewProjection(DecodedAgentViewProjection),
     AgentCompletions(crate::protocol::endpoint::EndpointAgentCompletions),
     Snapshot(Box<crate::protocol::ClientShellSnapshot>),
-    RegionProjection(crate::protocol::region_surface::RegionProjection),
-    RegionSurface(Box<crate::protocol::region_surface::RegionSurface>),
     Ignored,
 }
 
@@ -54,23 +52,6 @@ pub(crate) fn decode_endpoint_control(
                 view,
             },
         ));
-    }
-    if kind == crate::protocol::region_surface::PROJECTION_KIND {
-        return Ok(crate::protocol::region_surface::decode_projection(data)
-            .map(EndpointControlMessage::RegionProjection)
-            .unwrap_or(EndpointControlMessage::Ignored));
-    }
-    if kind == crate::protocol::region_surface::SURFACE_KIND {
-        // A bad region frame drops that frame only; it must not end the connection.
-        return Ok(
-            match crate::protocol::region_surface::decode_surface(data) {
-                Ok(surface) => EndpointControlMessage::RegionSurface(Box::new(surface)),
-                Err(error) => {
-                    tracing::debug!(%error, "ignoring invalid region surface");
-                    EndpointControlMessage::Ignored
-                }
-            },
-        );
     }
     if kind == crate::protocol::endpoint::ENDPOINT_SNAPSHOT_KIND {
         let snapshot = serde_json::from_str(data)

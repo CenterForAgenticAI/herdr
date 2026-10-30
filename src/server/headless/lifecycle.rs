@@ -69,16 +69,13 @@ impl HeadlessServer {
             }
         }
 
-        let mut snapshot = crate::persist::capture(
+        let snapshot = crate::persist::capture(
             &self.app.state.workspaces,
             &self.app.state.terminals,
             &self.app.terminal_runtimes,
             self.app.state.active,
             self.app.state.selected,
         );
-        // Region PTYs are not transferred: the old server drops them below and the
-        // replacement respawns each region from this metadata.
-        snapshot.regions = crate::persist::capture_regions(&self.app.state.regions);
 
         let mut handoff_entries = Vec::new();
         for (terminal_id, runtime) in self.app.terminal_runtimes.iter() {

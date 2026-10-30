@@ -92,7 +92,6 @@ impl App {
             return workspace_not_found(id, &target.workspace_id);
         }
         self.state.switch_workspace(index);
-        self.state.clear_region_focus();
 
         encode_success(
             id,

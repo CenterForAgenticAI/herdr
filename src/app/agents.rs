@@ -79,9 +79,6 @@ impl App {
         let resolved = self.resolve_agent_target(target)?;
         self.state
             .focus_pane_in_workspace(resolved.ws_idx, resolved.pane_id);
-        // Focusing an agent's pane releases region focus even when that pane was
-        // already the focused pane, so the anchor rule alone is not enough.
-        self.state.clear_region_focus();
         self.state.mark_active_tab_seen();
         self.state.mode = crate::app::Mode::Terminal;
         self.agent_info(resolved.ws_idx, resolved.pane_id)

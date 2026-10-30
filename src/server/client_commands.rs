@@ -254,26 +254,6 @@ mod tests {
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
         );
-        for (method, digest) in [
-            (
-                "region.focus",
-                "df2c6ba785f969eab48b12597f00713fe3f1babebc47b0ca1a84c546800b40ac",
-            ),
-            (
-                "region.hide",
-                "7eae6aaa3cd561158f1bf658e22bc9331b31e4764a2b83af752f634cd8181b5c",
-            ),
-            (
-                "region.resize",
-                "9b71f895e6ddf518ebfca010abc4f91b44cd6feb0a022c106ba6609192cd8210",
-            ),
-            (
-                "region.show",
-                "02f940c8b2bad7a1eaa542712d0b25cf673463679446b6bd9093d0ba68a1fa80",
-            ),
-        ] {
-            assert_eq!(actual.remove(method).as_deref(), Some(digest), "{method}");
-        }
 
         assert_eq!(
             actual, expected,

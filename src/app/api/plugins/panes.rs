@@ -245,7 +245,7 @@ impl App {
         )
     }
 
-    pub(super) fn plugin_pane_launch_env(
+    fn plugin_pane_launch_env(
         &self,
         plugin: &InstalledPluginInfo,
         entrypoint: &str,
@@ -338,7 +338,7 @@ impl App {
         )
     }
 
-    pub(super) fn plugin_pane_cwd(
+    fn plugin_pane_cwd(
         &self,
         plugin: &InstalledPluginInfo,
         override_cwd: Option<String>,
