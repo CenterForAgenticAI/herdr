@@ -9,7 +9,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
-pub(super) const SNAPSHOT_VERSION: u32 = 4;
+pub(super) const SNAPSHOT_VERSION: u32 = 3;
 
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
@@ -26,20 +26,6 @@ pub struct SessionSnapshot {
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
-    /// Desktop regions to reopen on restore. Metadata only: no screen or process state.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub regions: Vec<RegionSnapshot>,
-}
-
-/// One open desktop region, recorded so restore can respawn it from its plugin manifest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RegionSnapshot {
-    pub plugin_id: String,
-    pub entrypoint: String,
-    pub edge: crate::region::RegionEdge,
-    pub scope: crate::region::RegionScope,
-    pub size: u16,
-    pub visible: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -209,24 +195,6 @@ struct RawSessionSnapshot {
     sidebar_section_split: Option<f32>,
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
-    /// Kept raw so one unreadable entry (an edge from a newer herdr, a hand edit) drops
-    /// only that region instead of the whole session.
-    #[serde(default)]
-    regions: Vec<serde_json::Value>,
-}
-
-fn migrate_regions(raw: Vec<serde_json::Value>) -> Vec<RegionSnapshot> {
-    raw.into_iter()
-        .filter_map(
-            |value| match serde_json::from_value::<RegionSnapshot>(value) {
-                Ok(region) => Some(region),
-                Err(err) => {
-                    tracing::debug!(err = %err, "dropping unreadable region snapshot");
-                    None
-                }
-            },
-        )
-        .collect()
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
@@ -242,7 +210,6 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
-        regions: migrate_regions(raw.regions),
     })
 }
 
@@ -314,23 +281,7 @@ pub fn capture(
         sidebar_width: None,
         sidebar_section_split: None,
         collapsed_space_keys: std::collections::HashSet::new(),
-        regions: Vec::new(),
     }
-}
-
-/// Region metadata for the session snapshot, in edge order.
-pub fn capture_regions(regions: &crate::region::RegionState) -> Vec<RegionSnapshot> {
-    regions
-        .iter()
-        .map(|region| RegionSnapshot {
-            plugin_id: region.plugin_id.clone(),
-            entrypoint: region.entrypoint.clone(),
-            edge: region.edge,
-            scope: region.scope,
-            size: region.size,
-            visible: region.visible,
-        })
-        .collect()
 }
 
 fn capture_workspace(
@@ -712,7 +663,6 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
-            regions: Vec::new(),
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
@@ -802,7 +752,6 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
-            regions: Vec::new(),
             version: SNAPSHOT_VERSION,
         };
 
@@ -855,101 +804,6 @@ mod tests {
         assert_eq!(snap.sidebar_section_split, Some(0.4));
         assert_eq!(snap.workspaces[0].active_tab, 1);
         assert_eq!(snap.workspaces[1].tabs[0].panes.len(), 2);
-    }
-
-    fn region_snapshot(plugin_id: &str, size: u16, visible: bool) -> RegionSnapshot {
-        RegionSnapshot {
-            plugin_id: plugin_id.into(),
-            entrypoint: "board".into(),
-            edge: crate::region::RegionEdge::Right,
-            scope: crate::region::RegionScope::Session,
-            size,
-            visible,
-        }
-    }
-
-    #[test]
-    fn v3_fixture_loads_with_no_regions() {
-        let snap = parse_snapshot(session_fixture("current-herdr")).unwrap();
-
-        assert_eq!(snap.version, 3);
-        assert!(!snap.workspaces.is_empty());
-        assert!(snap.regions.is_empty());
-    }
-
-    #[test]
-    fn v4_regions_round_trip_through_json() {
-        let mut snap = capture_from_state(&state_with_workspaces(&["regions"]));
-        snap.regions = vec![region_snapshot("example.board", 44, false)];
-
-        let json = serde_json::to_string(&snap).unwrap();
-        let restored = parse_snapshot(&json).unwrap();
-
-        assert_eq!(restored.version, 4);
-        assert_eq!(
-            restored.regions,
-            vec![region_snapshot("example.board", 44, false)]
-        );
-    }
-
-    #[test]
-    fn region_list_is_omitted_when_empty() {
-        let snap = capture_from_state(&state_with_workspaces(&["no-regions"]));
-
-        let value = serde_json::to_value(&snap).unwrap();
-
-        assert!(value.get("regions").is_none(), "{value}");
-    }
-
-    #[test]
-    fn region_snapshot_writes_only_metadata_keys() {
-        let mut snap = capture_from_state(&state_with_workspaces(&["region-keys"]));
-        snap.regions = vec![region_snapshot("example.board", 30, true)];
-
-        let value = serde_json::to_value(&snap).unwrap();
-        let mut keys: Vec<&str> = value["regions"][0]
-            .as_object()
-            .expect("region object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        keys.sort_unstable();
-
-        assert_eq!(
-            keys,
-            [
-                "edge",
-                "entrypoint",
-                "plugin_id",
-                "scope",
-                "size",
-                "visible"
-            ]
-        );
-    }
-
-    #[test]
-    fn region_entry_with_unknown_edge_drops_alone() {
-        let json = serde_json::json!({
-            "version": SNAPSHOT_VERSION,
-            "workspaces": [],
-            "active": null,
-            "selected": 0,
-            "regions": [
-                {"plugin_id": "example.left", "entrypoint": "board", "edge": "left",
-                 "scope": "session", "size": 30, "visible": true},
-                {"plugin_id": "example.right", "entrypoint": "board", "edge": "right",
-                 "scope": "session", "size": 30, "visible": true}
-            ]
-        })
-        .to_string();
-
-        let restored = parse_snapshot(&json).unwrap();
-
-        assert_eq!(
-            restored.regions,
-            vec![region_snapshot("example.right", 30, true)]
-        );
     }
 
     #[test]
@@ -1599,7 +1453,6 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
-            regions: Vec::new(),
         };
 
         let json = serde_json::to_string(&snap).unwrap();

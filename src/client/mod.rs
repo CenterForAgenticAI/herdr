@@ -516,17 +516,6 @@ async fn run_client_loop(
                     })
                 }),
         );
-        shell.set_endpoint_regions_supported(
-            &endpoint::ClientEndpointId::Local,
-            initial
-                .as_ref()
-                .and_then(|(_, handshake)| handshake.endpoint_capabilities.as_ref())
-                .is_some_and(|capabilities| {
-                    capabilities
-                        .iter()
-                        .any(|capability| capability == crate::protocol::region_surface::CAPABILITY)
-                }),
-        );
         if local_unavailable {
             shell.set_endpoint_status(
                 &endpoint::ClientEndpointId::Local,
@@ -790,9 +779,6 @@ async fn run_client_loop(
         if let Some(shell) = state.shell.as_mut() {
             for endpoint_id in shell.take_machine_retries() {
                 supervisors.retry_now(&endpoint_id, now);
-            }
-            if let Some((endpoint_id, message)) = shell.take_region_viewport_report() {
-                write_stream.send_to(&endpoint_id, &message);
             }
         }
         if let Some(shell) = state.shell.as_ref() {
@@ -1406,11 +1392,6 @@ async fn run_client_loop(
                         shell.set_endpoint_agent_view_projection_supported(
                             &endpoint_id,
                             agent_view_projection_supported,
-                        );
-                        shell.set_endpoint_regions_supported(
-                            &endpoint_id,
-                            negotiation
-                                .supports_capability(crate::protocol::region_surface::CAPABILITY),
                         );
                         shell.compose(state.reported_size.0, state.reported_size.1)
                     });
@@ -2153,19 +2134,6 @@ async fn run_client_loop(
                                         projection,
                                     );
                                 }
-                                continue;
-                            }
-                            Ok(
-                                message @ (endpoint::EndpointControlMessage::RegionProjection(_)
-                                | endpoint::EndpointControlMessage::RegionSurface(_)),
-                            ) => {
-                                install_endpoint_region_message(
-                                    &mut state,
-                                    &endpoint_id,
-                                    message,
-                                    &mut write_stream,
-                                    &mut prefix_input_source,
-                                );
                                 continue;
                             }
                             Ok(endpoint::EndpointControlMessage::Ignored) => {

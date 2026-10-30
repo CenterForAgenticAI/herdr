@@ -80,7 +80,6 @@ mod endpoint_requests;
 mod lifecycle;
 mod native_graphics;
 mod notifications;
-mod regions;
 mod render;
 mod retained_surface;
 mod surface_interest;
@@ -593,7 +592,6 @@ impl HeadlessServer {
                     && self.render_retained_pane_surface_and_stream(&render_request.pty_sources)
                 {
                     crate::render_prof::event("retained_surface.invoke");
-                    self.stream_region_surfaces();
                 } else {
                     crate::render_prof::event("full_render.invoke");
                     self.render_and_stream();
@@ -1912,7 +1910,6 @@ impl HeadlessServer {
                 surface_reuse,
                 surface_delta,
                 surface_scroll,
-                regions,
                 writer,
             } => {
                 if self.handoff_in_progress {
@@ -1964,8 +1961,6 @@ impl HeadlessServer {
                     .render_state
                     .enable_surface_scroll(surface_scroll);
                 connection.shell_projection_revision = 1;
-                connection.shell_regions =
-                    regions.then(crate::server::clients::ClientRegionStream::default);
                 let config_diagnostic = if endpoint_keybindings {
                     self.server_config_diagnostic.as_deref()
                 } else {
@@ -2473,15 +2468,6 @@ impl HeadlessServer {
                 {
                     return false;
                 }
-                if self
-                    .app
-                    .state
-                    .regions
-                    .find_by_terminal(&terminal_id)
-                    .is_some()
-                {
-                    return self.handle_region_input(client_id, &terminal_id, events);
-                }
                 let pixel_mouse = self.clients.get(&client_id).is_some_and(|client| {
                     client.pixel_mouse && client.host_sgr_pixels_active == Some(true)
                 });
@@ -2662,10 +2648,6 @@ impl HeadlessServer {
                 self.remove_client_and_resize_if_needed(client_id);
                 true
             }
-            ServerEvent::ClientShellRegionViewport {
-                client_id,
-                viewport,
-            } => self.handle_region_viewport(client_id, viewport),
             ServerEvent::ClientWriterDrained { client_id } => {
                 let Some(client) = self.clients.get_mut(&client_id) else {
                     return false;

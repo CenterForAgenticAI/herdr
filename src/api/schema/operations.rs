@@ -205,12 +205,6 @@ mod tests {
             "plugin.pane.open",
             "plugin.pane.focus",
             "plugin.pane.close",
-            "region.open",
-            "region.close",
-            "region.focus",
-            "region.resize",
-            "region.show",
-            "region.hide",
         ]
         .into_iter()
         .collect::<BTreeSet<_>>();

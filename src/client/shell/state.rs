@@ -59,20 +59,6 @@ pub(super) struct ClientShellLayout {
     pub tab_bar: Rect,
     pub mobile_header: Rect,
     pub pane_surface: Rect,
-    /// Outer rect of the right desktop region, empty when none is drawn.
-    pub right_region: Rect,
-    /// Outer rect of the bottom desktop region, empty when none is drawn.
-    pub bottom_region: Rect,
-}
-
-impl ClientShellLayout {
-    /// Outer rect of the region on `edge`, empty when none is drawn.
-    pub(super) fn region(&self, edge: crate::region::RegionEdge) -> Rect {
-        match edge {
-            crate::region::RegionEdge::Right => self.right_region,
-            crate::region::RegionEdge::Bottom => self.bottom_region,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +92,6 @@ pub(super) struct ShellHitMap {
     pub(super) tabs: Vec<(Rect, String)>,
     pub(super) panes: Vec<PaneHit>,
     pub(super) popup: Option<PaneHit>,
-    pub(super) regions: Vec<super::regions::RegionHit>,
     pub(super) pane_splits: Vec<PaneSplitHit>,
     pub(super) agents: Vec<(Rect, String)>,
     pub(super) endpoint_agents: Vec<(Rect, ClientEndpointId, String)>,
@@ -203,13 +188,6 @@ pub(super) struct ClientTabPress {
 
 pub(super) enum ClientChromeDrag {
     SidebarWidth,
-    /// Dragging the inner border of a desktop region. The far edge of the frame stays put.
-    RegionBorder {
-        region_id: String,
-        edge: crate::region::RegionEdge,
-        far_edge: u16,
-        last_sent: Option<u16>,
-    },
     SidebarSection,
     WorkspaceScrollbar {
         grab_row_offset: u16,
@@ -917,11 +895,6 @@ pub(crate) struct ClientShellState {
     pub(super) last_composed_size: Option<(u16, u16)>,
     pub(super) last_composed_at: Option<std::time::Instant>,
     pub(super) selection_repaint_deadline: Option<std::time::Instant>,
-    /// Region viewports measured by the last compose, waiting to be sent.
-    pub(super) pending_region_viewports: Vec<(
-        ClientEndpointId,
-        crate::protocol::region_surface::RegionViewport,
-    )>,
     pub(super) hits: ShellHitMap,
     pub(super) endpoints: Vec<ClientShellEndpoint>,
     pub(super) active_endpoint_id: ClientEndpointId,
@@ -1096,7 +1069,6 @@ impl ClientShellState {
             last_composed_size: None,
             last_composed_at: None,
             selection_repaint_deadline: None,
-            pending_region_viewports: Vec::new(),
             hits: ShellHitMap::default(),
             endpoints: vec![local_endpoint()],
             active_endpoint_id: ClientEndpointId::Local,
@@ -1253,7 +1225,6 @@ impl ClientShellState {
             self.sidebar_collapsed,
             self.focused_tab_count(),
             self.sidebar_width,
-            self.region_requests(),
         )
     }
 

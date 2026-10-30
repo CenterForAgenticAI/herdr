@@ -403,10 +403,7 @@ pub struct Keybinds {
     pub resize_pane_up: ActionKeybinds,
     pub resize_pane_right: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
-    pub toggle_region: ActionKeybinds,
-    pub focus_region: ActionKeybinds,
-    pub toggle_bottom_region: ActionKeybinds,
-    pub focus_bottom_region: ActionKeybinds,
+    // rbtrial: planted upstream line beside the sidebar binding.
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
 
@@ -590,10 +587,7 @@ impl Config {
             resize_pane_up: empty_action!(),
             resize_pane_right: empty_action!(),
             toggle_sidebar: empty_action!(),
-            toggle_region: empty_action!(),
-            focus_region: empty_action!(),
-            toggle_bottom_region: empty_action!(),
-            focus_bottom_region: empty_action!(),
+            // rbtrial: planted upstream line beside the sidebar default.
             custom_commands: Vec::new(),
         };
 
@@ -742,10 +736,6 @@ impl Config {
             apply_action!(keybinds.resize_pane_up, resize_pane_up, source);
             apply_action!(keybinds.resize_pane_right, resize_pane_right, source);
             apply_action!(keybinds.toggle_sidebar, toggle_sidebar, source);
-            apply_action!(keybinds.toggle_region, toggle_region, source);
-            apply_action!(keybinds.focus_region, focus_region, source);
-            apply_action!(keybinds.toggle_bottom_region, toggle_bottom_region, source);
-            apply_action!(keybinds.focus_bottom_region, focus_bottom_region, source);
 
             if source == field_source!(indexed) {
                 append_legacy_indexed_bindings(

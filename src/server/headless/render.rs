@@ -323,16 +323,6 @@ impl HeadlessServer {
                 }
             }
         }
-        if has_app_target && self.has_region_viewer() {
-            pane_ids.extend(
-                self.app
-                    .state
-                    .regions
-                    .iter()
-                    .filter(|region| region.visible)
-                    .map(|region| region.pane_id),
-            );
-        }
         if !direct_terminal_targets.is_empty() {
             for workspace in &self.app.state.workspaces {
                 for tab in &workspace.tabs {
@@ -381,10 +371,6 @@ impl HeadlessServer {
         has_app_target: bool,
         direct_terminal_targets: &HashSet<&str>,
     ) -> bool {
-        if let Some(region) = self.app.state.regions.find_by_pane(pane_id) {
-            return (has_app_target && region.visible && self.has_region_viewer())
-                || direct_terminal_targets.contains(region.terminal_id.as_str());
-        }
         let terminal_id = self.terminal_id_for_pane(pane_id);
         (has_app_target && (terminal_id.is_none() || self.any_shell_surface_contains_pane(pane_id)))
             || terminal_id.is_none_or(|source| direct_terminal_targets.contains(source.as_str()))
@@ -1013,7 +999,6 @@ impl HeadlessServer {
                 self.remove_client_and_resize_if_needed(client_id);
             }
         }
-        self.stream_region_surfaces();
 
         let (cols, rows) = self.effective_size;
         // Full-frame recovery is tracked per connection. A slow client must not

@@ -29,7 +29,6 @@ pub(crate) mod pane;
 pub(crate) mod plugin;
 pub(crate) mod projection;
 mod protocol_guard;
-pub(crate) mod region;
 mod server;
 mod server_not_running;
 mod spec;
@@ -47,12 +46,10 @@ const TERMINAL_SESSION_CONTROL_USAGE: &str =
     "usage: herdr terminal session control <target> [--takeover] [--cols N] [--rows N]";
 pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
     "Are you an AI? Use these resources ONLY IF your task specifically asks you to:\n",
-    "  Help a human understand or set up Herdr for the first time:\n",
-    "    https://herdr.dev/agent-guide.md\n",
-    "  Debug or investigate a problem with Herdr:\n",
-    "    https://herdr.dev/llms.txt\n",
     "  Control Herdr panes, agents, or workspaces:\n",
-    "    SKIP if a Herdr skill is already in your context. Otherwise run: herdr --skill",
+    "    SKIP if a Herdr skill is already in your context. Otherwise run: herdr --skill\n",
+    "  Help a human understand or set up Herdr, or debug a problem with it:\n",
+    "    read the source and docs: https://github.com/herdrdev/herdr",
 );
 
 pub(crate) fn parse_token_assignment(raw: &str) -> Result<(String, Option<String>), String> {
@@ -135,7 +132,6 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => pane::run_pane_command(&args[2..])?,
         "plugin" => plugin::run_plugin_command(&args[2..])?,
-        "region" => region::run_region_command(&args[2..])?,
         "integration" => integration::run_integration_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
@@ -154,7 +150,6 @@ fn api_group(name: &str) -> Option<clap::Command> {
         "agent" => agent::command(),
         "pane" => pane::command(),
         "plugin" => plugin::command(),
-        "region" => region::command(),
         _ => return None,
     })
 }

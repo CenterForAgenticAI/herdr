@@ -159,13 +159,6 @@ impl ActiveSubscription {
                 Ok(event_subscription(EventKind::PaneAgentDetected))
             }
             Subscription::LayoutUpdated {} => Ok(event_subscription(EventKind::LayoutUpdated)),
-            Subscription::RegionOpened {} => Ok(event_subscription(EventKind::RegionOpened)),
-            Subscription::RegionClosed {} => Ok(event_subscription(EventKind::RegionClosed)),
-            Subscription::RegionFocused {} => Ok(event_subscription(EventKind::RegionFocused)),
-            Subscription::RegionResized {} => Ok(event_subscription(EventKind::RegionResized)),
-            Subscription::RegionVisibilityChanged {} => {
-                Ok(event_subscription(EventKind::RegionVisibilityChanged))
-            }
             Subscription::PaneOutputMatched {
                 pane_id,
                 source,

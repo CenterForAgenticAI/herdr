@@ -1,7 +1,7 @@
 use crate::api::schema::{
     InstalledPluginInfo, PluginManifestAction, PluginManifestBuild, PluginManifestEventHook,
-    PluginManifestLinkHandler, PluginManifestPane, PluginManifestRegion, PluginManifestStartup,
-    PluginPanePlacement, PluginPlatform, PluginSourceInfo, PluginSourceKind,
+    PluginManifestLinkHandler, PluginManifestPane, PluginManifestStartup, PluginPanePlacement,
+    PluginPlatform, PluginSourceInfo, PluginSourceKind,
 };
 use crate::popup_size::PopupSize;
 
@@ -31,8 +31,6 @@ struct RawPluginManifest {
     panes: Vec<RawPluginManifestPane>,
     #[serde(default)]
     link_handlers: Vec<RawPluginManifestLinkHandler>,
-    #[serde(default)]
-    regions: Vec<RawPluginManifestRegion>,
 }
 
 #[derive(serde::Deserialize)]
@@ -84,27 +82,6 @@ struct RawPluginManifestPane {
     width: Option<PopupSize>,
     #[serde(default)]
     height: Option<PopupSize>,
-    command: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct RawPluginManifestRegion {
-    id: String,
-    title: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    platforms: Option<Vec<RawPlatform>>,
-    #[serde(default)]
-    edge: Option<String>,
-    #[serde(default)]
-    scope: Option<String>,
-    #[serde(default)]
-    size: Option<u16>,
-    #[serde(default)]
-    min_size: Option<u16>,
-    #[serde(default)]
-    max_size: Option<u16>,
     command: Vec<String>,
 }
 
@@ -220,13 +197,6 @@ pub(crate) fn load_plugin_manifest(
         .collect::<Result<Vec<_>, _>>()?;
     reject_duplicate_link_handler_ids(&link_handlers)?;
     validate_link_handler_actions(&link_handlers, &actions)?;
-    let mut regions = raw
-        .regions
-        .into_iter()
-        .map(normalize_manifest_region)
-        .collect::<Result<Vec<_>, _>>()?;
-    reject_duplicate_regions(&regions)?;
-    regions.sort_by(|a, b| a.id.cmp(&b.id));
 
     let mut warnings = validate_event_names(&events);
     if platforms.is_none() {
@@ -249,7 +219,6 @@ pub(crate) fn load_plugin_manifest(
         events,
         panes,
         link_handlers,
-        regions,
         source: Default::default(),
         warnings,
     })
@@ -478,88 +447,6 @@ fn normalize_manifest_pane(
         height: pane.height,
         command,
     })
-}
-
-fn normalize_manifest_region(
-    region: RawPluginManifestRegion,
-) -> Result<PluginManifestRegion, (&'static str, String)> {
-    let id = normalize_action_id(&region.id)
-        .ok_or_else(|| ("invalid_plugin_region_id", "invalid region id".to_string()))?;
-    let title = non_empty_trimmed(
-        &region.title,
-        "invalid_plugin_region_title",
-        "region title is required",
-    )?;
-    let description = region
-        .description
-        .map(|description| description.trim().to_string())
-        .filter(|description| !description.is_empty());
-    let edge = match region.edge.as_deref() {
-        None => crate::region::RegionEdge::default(),
-        Some(value) => crate::region::RegionEdge::parse(value).ok_or_else(|| {
-            (
-                "invalid_plugin_region_edge",
-                format!(
-                    "region '{id}' has unsupported edge '{value}'; supported: {}",
-                    crate::region::RegionEdge::SUPPORTED.join(", ")
-                ),
-            )
-        })?,
-    };
-    let scope = match region.scope.as_deref() {
-        None => crate::region::RegionScope::default(),
-        Some(value) => crate::region::RegionScope::parse(value).ok_or_else(|| {
-            (
-                "invalid_plugin_region_scope",
-                format!(
-                    "region '{id}' has unsupported scope '{value}'; supported: {}",
-                    crate::region::RegionScope::SUPPORTED.join(", ")
-                ),
-            )
-        })?,
-    };
-    let platforms = normalize_platforms(region.platforms)?;
-    let command = normalize_command(region.command)?;
-    Ok(PluginManifestRegion {
-        id,
-        title,
-        description,
-        platforms,
-        edge,
-        scope,
-        size: region.size,
-        min_size: region.min_size,
-        max_size: region.max_size,
-        command,
-    })
-}
-
-/// One plugin may declare each region id once and claim each (edge, scope) slot once.
-fn reject_duplicate_regions(
-    regions: &[PluginManifestRegion],
-) -> Result<(), (&'static str, String)> {
-    let mut ids = std::collections::HashSet::new();
-    let mut slots = std::collections::HashMap::new();
-    for region in regions {
-        if !ids.insert(region.id.as_str()) {
-            return Err((
-                "duplicate_plugin_region_id",
-                format!("duplicate region id '{}'", region.id),
-            ));
-        }
-        if let Some(other) = slots.insert((region.edge, region.scope), region.id.as_str()) {
-            return Err((
-                "conflicting_plugin_region_slot",
-                format!(
-                    "regions '{other}' and '{}' both claim the {} edge in {} scope",
-                    region.id,
-                    region.edge.as_str(),
-                    region.scope.as_str()
-                ),
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn normalize_manifest_event(

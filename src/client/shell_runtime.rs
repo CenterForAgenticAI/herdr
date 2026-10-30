@@ -673,56 +673,6 @@ pub(super) fn handle_endpoint_attention(
     endpoint_was_active
 }
 
-/// Store region traffic from an endpoint and recompose when it changes what is on screen.
-/// A projection can change the pane area, so the server gets a resize when it does.
-pub(super) fn install_endpoint_region_message(
-    state: &mut ClientState,
-    endpoint_id: &endpoint::ClientEndpointId,
-    message: endpoint::EndpointControlMessage,
-    endpoints: &mut endpoint::EndpointRegistry,
-    prefix_input_source: &mut impl crate::platform::PrefixInputSource,
-) {
-    let presentable = endpoints.active_id() == endpoint_id && endpoints.active_surface_available();
-    let pixel_mouse_available = state.pixel_mouse_available();
-    let (composed, resize) = if let Some(shell) = state.shell.as_mut() {
-        let previous_size = shell.surface_size(state.reported_size.0, state.reported_size.1);
-        let changed = match message {
-            endpoint::EndpointControlMessage::RegionProjection(projection) => {
-                shell.set_endpoint_region_projection(endpoint_id, projection)
-            }
-            endpoint::EndpointControlMessage::RegionSurface(surface) => {
-                shell.set_endpoint_region_surface(endpoint_id, *surface)
-            }
-            _ => false,
-        };
-        let next_size = shell.surface_size(state.reported_size.0, state.reported_size.1);
-        let resize = (previous_size != next_size).then(|| {
-            shell.invalidate_pane_surface();
-            client_shell_resize_message(
-                shell,
-                state.reported_size.0,
-                state.reported_size.1,
-                state.reported_cell_size.0,
-                state.reported_cell_size.1,
-                pixel_mouse_available,
-            )
-        });
-        let composed = (changed && presentable)
-            .then(|| shell.compose(state.reported_size.0, state.reported_size.1))
-            .flatten();
-        (composed, resize)
-    } else {
-        (None, None)
-    };
-    apply_client_shell_input_source_changes(state, prefix_input_source);
-    if let Some(resize) = resize {
-        endpoints.send_to(endpoint_id, &resize);
-    }
-    if let Some(frame) = composed {
-        state.present_frame(frame);
-    }
-}
-
 pub(super) fn install_client_shell_snapshot(
     state: &mut ClientState,
     endpoint_id: &endpoint::ClientEndpointId,

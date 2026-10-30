@@ -475,22 +475,6 @@ herdr pane report-metadata <pane_id> \
 
 サイドバーの行設定は、展開されたデスクトップサイドバーにだけ適用されます。折りたたみ表示とモバイル表示はコンパクトなレイアウトを保ちます。
 
-プラグインは、どのタブにも属さないターミナルをウィンドウの右端または下端に配置できます([リージョン](/ja/docs/plugins/#リージョン)を参照)。`[ui.regions.right]` と `[ui.regions.bottom]` でそれぞれの辺を設定します。
-
-```toml
-[ui.regions.right]
-enabled = true       # false にすると region.open は region_edge_disabled で失敗します
-size = 40            # セル単位の幅。プラグインの min_size/max_size の範囲に収められます
-start_hidden = false # true にすると、表示するまでリージョンを非表示で開きます
-
-[ui.regions.bottom]
-enabled = true
-size = 12            # 行単位の高さ。プラグインの min_size/max_size の範囲に収められます
-start_hidden = false
-```
-
-`size` はデフォルトで未設定で、その場合はプラグインのマニフェストのサイズを使います。`keys.toggle_region` と `keys.focus_region` を割り当てると右側のリージョンを、`keys.toggle_bottom_region` と `keys.focus_bottom_region` を割り当てると下側のリージョンを、キーボードで表示切り替え・フォーカスできます。4 つともデフォルトでは未設定です。
-
 ## 通知
 
 Herdr は、バックグラウンドのエージェントが完了したり入力を必要としたりしたときに通知できます:
