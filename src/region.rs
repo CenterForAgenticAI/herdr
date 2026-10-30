@@ -25,6 +25,16 @@ pub(crate) const REGION_SIZE_FLOOR: u16 = 4;
 /// Absolute upper bound for any region size, including manifest and config bounds.
 pub(crate) const REGION_SIZE_CEILING: u16 = 400;
 pub(crate) const DEFAULT_REGION_SIZE: u16 = 32;
+
+/// Largest size a region on `edge` can take from `span` cells and still leave the tab area
+/// its minimum. `span` runs from the tab area's near side to the region's far edge: columns
+/// for a right region, rows for a bottom region. `layout_regions` hides a larger region.
+pub(crate) fn max_region_size_in(edge: RegionEdge, span: u16) -> u16 {
+    match edge {
+        RegionEdge::Right => span.saturating_sub(MIN_TAB_SURFACE_WIDTH),
+        RegionEdge::Bottom => span.saturating_sub(MIN_TAB_SURFACE_HEIGHT),
+    }
+}
 pub(crate) const DEFAULT_REGION_MIN_SIZE: u16 = 8;
 pub(crate) const DEFAULT_REGION_MAX_SIZE: u16 = 200;
 
