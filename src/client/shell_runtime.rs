@@ -682,7 +682,9 @@ pub(super) fn install_endpoint_region_message(
     endpoints: &mut endpoint::EndpointRegistry,
     prefix_input_source: &mut impl crate::platform::PrefixInputSource,
 ) {
-    let presentable = endpoints.active_id() == endpoint_id && endpoints.active_surface_available();
+    // The shell reports whether the message changed anything drawn: the viewed machine's
+    // regions, or the local server's regions filling edges the viewed machine leaves free.
+    let presentable = endpoints.active_surface_available();
     let pixel_mouse_available = state.pixel_mouse_available();
     let (composed, resize) = if let Some(shell) = state.shell.as_mut() {
         let previous_size = shell.surface_size(state.reported_size.0, state.reported_size.1);
@@ -716,7 +718,10 @@ pub(super) fn install_endpoint_region_message(
     };
     apply_client_shell_input_source_changes(state, prefix_input_source);
     if let Some(resize) = resize {
-        endpoints.send_to(endpoint_id, &resize);
+        // The pane area belongs to the viewed machine, even when the local server's regions
+        // changed it.
+        let active = endpoints.active_id().clone();
+        endpoints.send_to(&active, &resize);
     }
     if let Some(frame) = composed {
         state.present_frame(frame);
@@ -857,6 +862,16 @@ pub(super) fn finish_client_shell_input(
         .is_none_or(|shell| shell.endpoint_is_online(endpoints.active_id()))
         && endpoints.active_surface_available();
     for request in outcome.requests {
+        // Input to a fallback region and region commands belong to the local server.
+        if let Some(owner) = state
+            .shell
+            .as_ref()
+            .and_then(|shell| shell.region_message_owner(&request))
+            .filter(|owner| owner != endpoints.active_id())
+        {
+            endpoints.send_to(&owner, &request);
+            continue;
+        }
         if let ClientMessage::ClientShellHostTheme { update } = &request {
             state.record_host_theme_update(update);
             if let Some(activation) = pending_activation.as_mut() {

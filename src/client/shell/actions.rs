@@ -382,6 +382,8 @@ impl ClientShellState {
         };
         if changes_focus {
             outcome.repaint |= self.pending_workspace_highlight.take().is_some();
+            // Focusing a pane on the viewed machine takes the keyboard off a fallback region.
+            outcome.repaint |= self.fallback_region_focus.take().is_some();
         }
         if !self.endpoint_is_online(&self.active_endpoint_id) {
             let label = self.active_endpoint_label().to_owned();
