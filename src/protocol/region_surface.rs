@@ -8,7 +8,7 @@
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 
-use super::{FrameData, ServerMessage, MAX_FRAME_SIZE};
+use super::{ClientMessage, FrameData, ServerMessage, MAX_FRAME_SIZE};
 
 pub(crate) const CAPABILITY: &str = "region_surface";
 /// Server to client, JSON [`RegionProjection`].
@@ -17,6 +17,12 @@ pub(crate) const PROJECTION_KIND: &str = "endpoint.regions.v1";
 pub(crate) const SURFACE_KIND: &str = "endpoint.region-surface.v1";
 /// Client to server, JSON [`RegionViewport`].
 pub(crate) const VIEWPORT_KIND: &str = "endpoint.region-viewport.v1";
+/// Client to server, JSON [`RegionCommand`]. A shell that is viewing another machine may not
+/// send endpoint requests here, so it shows, hides and resizes this server's regions with it.
+pub(crate) const COMMAND_KIND: &str = "endpoint.region-command.v1";
+/// The server keeps streaming its regions to shells that are viewing another machine, and
+/// accepts their region input and [`COMMAND_KIND`] messages.
+pub(crate) const BACKGROUND_CAPABILITY: &str = "region_background";
 
 const MAX_GRID_DIMENSION: u16 = 4096;
 const MAX_GRID_CELLS: usize = 1_000_000;
@@ -66,6 +72,26 @@ pub(crate) struct RegionViewport {
     pub(crate) region_id: String,
     pub(crate) cols: u16,
     pub(crate) rows: u16,
+}
+
+/// A region change from a shell that is viewing another machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub(crate) enum RegionCommand {
+    Show { region_id: String },
+    Hide { region_id: String },
+    Resize { region_id: String, size: u16 },
+}
+
+pub(crate) fn command_message(command: &RegionCommand) -> serde_json::Result<ClientMessage> {
+    Ok(ClientMessage::EndpointControl {
+        kind: COMMAND_KIND.into(),
+        data: serde_json::to_string(command)?,
+    })
+}
+
+pub(crate) fn decode_command(data: &str) -> Option<RegionCommand> {
+    serde_json::from_str(data).ok()
 }
 
 pub(crate) fn projection_message(
@@ -156,6 +182,31 @@ mod tests {
             ServerMessage::EndpointControl { kind, data } => (kind, data),
             other => panic!("expected endpoint control, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn region_command_json_shape_is_frozen() {
+        let command = RegionCommand::Resize {
+            region_id: "region_1".into(),
+            size: 40,
+        };
+        let ClientMessage::EndpointControl { kind, data } = command_message(&command).unwrap()
+        else {
+            panic!("command rides EndpointControl");
+        };
+        assert_eq!(kind, "endpoint.region-command.v1");
+        assert_eq!(data, r#"{"op":"resize","region_id":"region_1","size":40}"#);
+        assert_eq!(decode_command(&data), Some(command));
+        assert_eq!(
+            decode_command(r#"{"op":"hide","region_id":"region_1"}"#),
+            Some(RegionCommand::Hide {
+                region_id: "region_1".into()
+            })
+        );
+        assert_eq!(
+            decode_command(r#"{"op":"close","region_id":"region_1"}"#),
+            None
+        );
     }
 
     #[test]
