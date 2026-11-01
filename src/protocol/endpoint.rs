@@ -178,6 +178,7 @@ impl EndpointServerWelcome {
                 AGENT_VIEW_PROJECTION_CAPABILITY.into(),
                 AGENT_COMPLETIONS_CAPABILITY.into(),
                 super::region_surface::CAPABILITY.into(),
+                super::region_surface::BACKGROUND_CAPABILITY.into(),
             ],
             error: None,
         }
@@ -393,6 +394,7 @@ mod tests {
                 AGENT_VIEW_PROJECTION_CAPABILITY.to_string(),
                 AGENT_COMPLETIONS_CAPABILITY.to_string(),
                 super::super::region_surface::CAPABILITY.to_string(),
+                super::super::region_surface::BACKGROUND_CAPABILITY.to_string(),
             ]
         );
     }

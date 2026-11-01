@@ -45,6 +45,11 @@ impl HeadlessServer {
                 if let Some(writer) = &client.writer {
                     writer.discard_pending_render();
                 }
+                // Discarding also dropped queued region frames. The shell keeps drawing this
+                // server's regions while it views another machine, so they must be resent.
+                if let Some(stream) = client.shell_regions.as_mut() {
+                    stream.sent_frames.clear();
+                }
             }
             (changed, client.shell_projection_revision)
         };

@@ -14,13 +14,12 @@ use crate::server::clients::{RegionFrameKey, RegionViewportReport, SentRegionPro
 const MAX_REGION_VIEWPORTS: usize = 8;
 
 impl HeadlessServer {
-    /// Whether any active shell with a writer opted into regions.
+    /// Whether any shell with a writer opted into regions. A shell viewing another machine
+    /// still counts: it keeps drawing this server's regions on edges that machine leaves free.
     pub(super) fn has_region_viewer(&self) -> bool {
-        self.clients.values().any(|client| {
-            client.shell_regions.is_some()
-                && client.writer.is_some()
-                && client.is_active_shell_client()
-        })
+        self.clients
+            .values()
+            .any(|client| client.shell_regions.is_some() && client.writer.is_some())
     }
 
     fn client_regions(&self) -> Vec<ClientRegion> {
@@ -102,9 +101,6 @@ impl HeadlessServer {
     /// most recent report. A client that hides the region (zero size) never drives it.
     pub(super) fn driving_region_viewport(&self, region_id: &str) -> Option<(u16, u16)> {
         let usable = |client: &ClientConnection| {
-            if !client.is_active_shell_client() {
-                return None;
-            }
             client
                 .shell_regions
                 .as_ref()?
@@ -252,10 +248,9 @@ impl HeadlessServer {
                 .copied()
                 .filter(|client_id| {
                     self.clients.get(client_id).is_some_and(|client| {
-                        client.is_active_shell_client()
-                            && client.shell_regions.as_ref().is_some_and(|stream| {
-                                stream.sent_frames.get(region_id) != Some(&key_for(client))
-                            })
+                        client.shell_regions.as_ref().is_some_and(|stream| {
+                            stream.sent_frames.get(region_id) != Some(&key_for(client))
+                        })
                     })
                 })
                 .collect::<Vec<_>>();
@@ -309,8 +304,42 @@ impl HeadlessServer {
         }
     }
 
+    /// Show, hide or resize a region for a region-capable shell. A shell viewing another
+    /// machine sends these instead of endpoint requests, which this server refuses from it.
+    pub(super) fn handle_region_command(
+        &mut self,
+        client_id: u64,
+        command: region_surface::RegionCommand,
+    ) -> bool {
+        // handle_server_event already drops client events during a live handoff.
+        if self
+            .clients
+            .get(&client_id)
+            .is_none_or(|client| client.shell_regions.is_none())
+        {
+            return false;
+        }
+        let result = match &command {
+            region_surface::RegionCommand::Show { region_id } => {
+                self.app.set_region_visible(region_id, true)
+            }
+            region_surface::RegionCommand::Hide { region_id } => {
+                self.app.set_region_visible(region_id, false)
+            }
+            region_surface::RegionCommand::Resize { region_id, size } => {
+                self.app.resize_region(region_id, u32::from(*size))
+            }
+        };
+        if let Err(err) = result {
+            debug!(client_id, ?command, ?err, "ignoring region command");
+            return false;
+        }
+        true
+    }
+
     /// Forward one input batch to a region terminal. Only a region-capable shell may type
-    /// into a region, and a hidden region accepts only releases of presses it already took.
+    /// into a region, even while it views another machine, and a hidden region accepts only
+    /// releases of presses it already took.
     pub(super) fn handle_region_input(
         &mut self,
         client_id: u64,
@@ -329,7 +358,7 @@ impl HeadlessServer {
         let Some(client) = self.clients.get(&client_id) else {
             return false;
         };
-        if client.shell_regions.is_none() || !client.is_active_shell_client() {
+        if client.shell_regions.is_none() {
             return false;
         }
         let pixel_mouse = client.pixel_mouse && client.host_sgr_pixels_active == Some(true);

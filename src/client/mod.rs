@@ -516,16 +516,21 @@ async fn run_client_loop(
                     })
                 }),
         );
-        shell.set_endpoint_regions_supported(
-            &endpoint::ClientEndpointId::Local,
+        let local_capability = |name: &str| {
             initial
                 .as_ref()
                 .and_then(|(_, handshake)| handshake.endpoint_capabilities.as_ref())
                 .is_some_and(|capabilities| {
-                    capabilities
-                        .iter()
-                        .any(|capability| capability == crate::protocol::region_surface::CAPABILITY)
-                }),
+                    capabilities.iter().any(|capability| capability == name)
+                })
+        };
+        shell.set_endpoint_regions_supported(
+            &endpoint::ClientEndpointId::Local,
+            local_capability(crate::protocol::region_surface::CAPABILITY),
+        );
+        shell.set_endpoint_regions_background(
+            &endpoint::ClientEndpointId::Local,
+            local_capability(crate::protocol::region_surface::BACKGROUND_CAPABILITY),
         );
         if local_unavailable {
             shell.set_endpoint_status(
@@ -1411,6 +1416,12 @@ async fn run_client_loop(
                             &endpoint_id,
                             negotiation
                                 .supports_capability(crate::protocol::region_surface::CAPABILITY),
+                        );
+                        shell.set_endpoint_regions_background(
+                            &endpoint_id,
+                            negotiation.supports_capability(
+                                crate::protocol::region_surface::BACKGROUND_CAPABILITY,
+                            ),
                         );
                         shell.compose(state.reported_size.0, state.reported_size.1)
                     });

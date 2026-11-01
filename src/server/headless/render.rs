@@ -323,7 +323,7 @@ impl HeadlessServer {
                 }
             }
         }
-        if has_app_target && self.has_region_viewer() {
+        if self.has_region_viewer() {
             pane_ids.extend(
                 self.app
                     .state
@@ -382,7 +382,7 @@ impl HeadlessServer {
         direct_terminal_targets: &HashSet<&str>,
     ) -> bool {
         if let Some(region) = self.app.state.regions.find_by_pane(pane_id) {
-            return (has_app_target && region.visible && self.has_region_viewer())
+            return (region.visible && self.has_region_viewer())
                 || direct_terminal_targets.contains(region.terminal_id.as_str());
         }
         let terminal_id = self.terminal_id_for_pane(pane_id);
@@ -395,7 +395,7 @@ impl HeadlessServer {
         sources: &HashSet<crate::layout::PaneId>,
     ) -> bool {
         let (has_app_target, direct_terminal_targets) = self.pty_render_targets();
-        if !has_app_target && direct_terminal_targets.is_empty() {
+        if !has_app_target && direct_terminal_targets.is_empty() && !self.has_region_viewer() {
             return false;
         }
 

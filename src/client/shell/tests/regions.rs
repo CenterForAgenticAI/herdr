@@ -843,3 +843,296 @@ fn focused_bottom_region_takes_keyboard_input() {
         Some(BOTTOM_REGION_TERMINAL)
     );
 }
+
+// The local server's regions stay on screen while another machine is viewed.
+
+const REMOTE_REGION_ID: &str = "remote_region";
+const REMOTE_REGION_TERMINAL: &str = "terminal-remote-region";
+
+fn remote_region(size: u16) -> ClientRegion {
+    ClientRegion {
+        region_id: REMOTE_REGION_ID.into(),
+        terminal_id: REMOTE_REGION_TERMINAL.into(),
+        title: "remote".into(),
+        ..region(size, true, false)
+    }
+}
+
+/// A shell whose local server shows `local` regions, switched to view a second machine.
+fn viewing_remote(
+    local: Vec<ClientRegion>,
+    background: bool,
+) -> (ClientShellState, ClientEndpointId) {
+    use crate::client::endpoint::{ClientEndpointStatus, ProfileId, SavedSshEndpoint};
+    let mut state = shell_with_regions(local);
+    state.set_endpoint_regions_background(&ClientEndpointId::Local, background);
+    let profile = SavedSshEndpoint {
+        id: ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        label: "Build".into(),
+        target: "dev@build.example".into(),
+        session: "agents".into(),
+        enabled: true,
+    };
+    let remote = ClientEndpointId::Ssh(profile.id.clone());
+    state.set_endpoint_catalog(&[profile]);
+    state.set_endpoint_status(&remote, ClientEndpointStatus::Online);
+    let mut snapshot = snapshot();
+    snapshot.boot_id = "remote-boot".into();
+    state.set_endpoint_snapshot(&remote, Box::new(snapshot));
+    assert!(state.activate_endpoint_projection(&remote));
+    let mut remote_surface = surface();
+    remote_surface.boot_id = "remote-boot".into();
+    state.set_pane_surface(remote_surface);
+    (state, remote)
+}
+
+fn viewports(state: &mut ClientShellState) -> Vec<(ClientEndpointId, String, u16, u16)> {
+    let mut reports = Vec::new();
+    while let Some((endpoint, message)) = state.take_region_viewport_report() {
+        let ClientMessage::EndpointControl { data, .. } = message else {
+            panic!("viewport rides EndpointControl");
+        };
+        let viewport = crate::protocol::region_surface::decode_viewport(&data).expect("viewport");
+        reports.push((endpoint, viewport.region_id, viewport.cols, viewport.rows));
+    }
+    reports
+}
+
+fn region_commands(
+    input: &ClientShellInput,
+) -> Vec<crate::protocol::region_surface::RegionCommand> {
+    input
+        .requests
+        .iter()
+        .filter_map(|request| match request {
+            ClientMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::region_surface::COMMAND_KIND =>
+            {
+                Some(crate::protocol::region_surface::decode_command(data).expect("command"))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn local_region_stays_drawn_while_another_machine_is_viewed() {
+    let (mut state, _) = viewing_remote(vec![region(30, true, false)], true);
+    assert_eq!(state.layout(106, 20).right_region.width, 30);
+    assert!(
+        state.set_endpoint_region_surface(&ClientEndpointId::Local, region_surface()),
+        "a local frame redraws the remote view"
+    );
+    state.compose(106, 20).expect("frame");
+    assert!(state.hits.regions.first().is_some_and(|hit| hit.fallback));
+    assert_eq!(
+        viewports(&mut state),
+        vec![(ClientEndpointId::Local, REGION_ID.to_string(), 28, 18)],
+        "the local server keeps learning the region size"
+    );
+
+    // A local server that cannot serve a background client keeps the old behaviour.
+    let (old, _) = viewing_remote(vec![region(30, true, false)], false);
+    assert!(old.layout(106, 20).right_region.is_empty());
+}
+
+#[test]
+fn the_viewed_machine_region_wins_its_edge_and_the_covered_local_one_reports_zero() {
+    let (mut state, remote) = viewing_remote(
+        vec![region(30, true, false), bottom_region(6, true, false)],
+        true,
+    );
+    state.set_endpoint_regions_supported(&remote, true);
+    let mut remote_projection = projection(1, vec![remote_region(40)]);
+    remote_projection.boot_id = "remote-boot".into();
+    assert!(state.set_endpoint_region_projection(&remote, remote_projection));
+
+    let layout = state.layout(106, 30);
+    assert_eq!(layout.right_region.width, 40, "remote right region");
+    assert_eq!(
+        layout.bottom_region.height, 6,
+        "local bottom region fills the free edge"
+    );
+    state.compose(106, 30).expect("frame");
+    let mut reports = viewports(&mut state);
+    reports.sort_by(|a, b| a.1.cmp(&b.1));
+    assert_eq!(
+        reports,
+        vec![
+            (ClientEndpointId::Local, REGION_ID.to_string(), 0, 0),
+            (
+                ClientEndpointId::Local,
+                BOTTOM_REGION_ID.to_string(),
+                layout.bottom_region.width - 2,
+                4
+            ),
+            (remote.clone(), REMOTE_REGION_ID.to_string(), 38, 28),
+        ]
+    );
+}
+
+#[test]
+fn clicking_a_local_region_on_a_remote_view_focuses_it_on_the_client_only() {
+    let (mut state, remote) = viewing_remote(vec![region(30, true, false)], true);
+    state.compose(106, 20).expect("frame");
+    let hit = state.hits.regions.first().cloned().expect("region hit");
+    let click = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        hit.terminal.inner_rect.x + 2,
+        hit.terminal.inner_rect.y + 1,
+    )]);
+    assert!(
+        endpoint_methods(&click).is_empty(),
+        "the viewed machine is not asked to focus a region it does not have"
+    );
+    assert_eq!(state.fallback_region_focus.as_deref(), Some(REGION_ID));
+
+    let keys = state.handle_input_bytes(b"x");
+    assert!(
+        matches!(
+            &keys.requests[..],
+            [ClientMessage::ClientShellPopupInput { terminal_id, .. }] if terminal_id == REGION_TERMINAL
+        ),
+        "{:?}",
+        keys.requests
+    );
+    assert_eq!(
+        state.region_message_owner(&keys.requests[0]),
+        Some(ClientEndpointId::Local),
+        "typing reaches the local server"
+    );
+
+    // A click on the viewed machine's pane takes the keyboard back.
+    state.compose(106, 20).expect("frame");
+    let pane = state.hits.panes[0].clone();
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        pane.inner_rect.x,
+        pane.inner_rect.y,
+    )]);
+    assert_eq!(state.fallback_region_focus, None);
+    let keys = state.handle_input_bytes(b"x");
+    assert!(
+        matches!(
+            &keys.requests[..],
+            [ClientMessage::ClientShellPaneInput { .. }]
+        ),
+        "{:?}",
+        keys.requests
+    );
+    assert_eq!(state.region_message_owner(&keys.requests[0]), None);
+    assert_ne!(remote, ClientEndpointId::Local);
+}
+
+#[test]
+fn focus_binding_toggles_local_focus_and_switching_machines_clears_it() {
+    let (mut state, _) = viewing_remote(vec![region(30, true, false)], true);
+    state.compose(106, 20).expect("frame");
+    let focus = crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusRegion);
+    let mut outcome = ClientShellInput::default();
+    state.record_binding(focus.clone(), &mut outcome);
+    assert!(endpoint_methods(&outcome).is_empty());
+    assert_eq!(state.fallback_region_focus.as_deref(), Some(REGION_ID));
+    state.record_binding(focus.clone(), &mut outcome);
+    assert_eq!(state.fallback_region_focus, None);
+
+    state.record_binding(focus, &mut outcome);
+    assert!(state.activate_endpoint_projection(&ClientEndpointId::Local));
+    assert_eq!(
+        state.fallback_region_focus, None,
+        "focus does not follow back home"
+    );
+}
+
+#[test]
+fn toggle_and_drag_on_a_local_region_send_region_commands_to_the_local_server() {
+    use crate::protocol::region_surface::RegionCommand;
+    let (mut state, _) = viewing_remote(vec![region(30, true, false)], true);
+    state.compose(106, 20).expect("frame");
+    let outer = state
+        .hits
+        .regions
+        .first()
+        .cloned()
+        .expect("region hit")
+        .outer;
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        outer.x,
+        5,
+    )]);
+    let drag = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        outer.x - 6,
+        5,
+    )]);
+    assert!(endpoint_methods(&drag).is_empty());
+    assert_eq!(
+        region_commands(&drag),
+        vec![RegionCommand::Resize {
+            region_id: REGION_ID.into(),
+            size: 36
+        }]
+    );
+    assert_eq!(
+        state.region_message_owner(&drag.requests[0]),
+        Some(ClientEndpointId::Local)
+    );
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        outer.x - 6,
+        5,
+    )]);
+
+    let mut outcome = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleRegion),
+        &mut outcome,
+    );
+    assert!(endpoint_methods(&outcome).is_empty());
+    assert_eq!(
+        region_commands(&outcome),
+        vec![RegionCommand::Hide {
+            region_id: REGION_ID.into()
+        }]
+    );
+
+    // Hidden locally: toggle shows it again through a command.
+    let (mut hidden, _) = viewing_remote(vec![region(30, false, false)], true);
+    let mut outcome = ClientShellInput::default();
+    hidden.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleRegion),
+        &mut outcome,
+    );
+    assert_eq!(
+        region_commands(&outcome),
+        vec![RegionCommand::Show {
+            region_id: REGION_ID.into()
+        }]
+    );
+}
+
+#[test]
+fn a_pane_focus_binding_takes_the_keyboard_off_a_local_region() {
+    let (mut state, _) = viewing_remote(vec![region(30, true, false)], true);
+    state.compose(106, 20).expect("frame");
+    let mut outcome = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusRegion),
+        &mut outcome,
+    );
+    assert_eq!(state.fallback_region_focus.as_deref(), Some(REGION_ID));
+
+    let mut outcome = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusPaneLeft),
+        &mut outcome,
+    );
+    assert!(
+        endpoint_methods(&outcome)
+            .iter()
+            .any(|method| matches!(method, crate::api::schema::Method::PaneFocusDirection(_))),
+        "the viewed machine moves its pane focus"
+    );
+    assert_eq!(state.fallback_region_focus, None);
+}
