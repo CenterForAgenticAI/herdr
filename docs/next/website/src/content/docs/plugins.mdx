@@ -408,6 +408,15 @@ region. All four bindings are unset by default. With the mouse, click a region
 to focus it and drag its inner border to resize it: the left border of a right
 region, the top border of a bottom region.
 
+Regions belong to the machine whose server runs them. When you view a space on
+another machine, an edge shows that machine's region if it has one and this
+machine's region otherwise, so your local board stays on screen. Typing,
+clicking, toggling, and resizing a local region shown this way reach the local
+server. Its keyboard focus is held by the client: clicking a pane, or any key
+binding that moves pane focus, returns the keyboard to the viewed machine, and
+switching machines clears it. A local server older than this feature stops
+streaming its regions while you view another machine.
+
 ## Keybindings
 
 Bind a key to an installed plugin action:

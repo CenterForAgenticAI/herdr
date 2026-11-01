@@ -2466,14 +2466,11 @@ impl HeadlessServer {
                 terminal_id,
                 events,
             } => {
-                if self.handoff_in_progress
-                    || !self
-                        .clients
-                        .get(&client_id)
-                        .is_some_and(ClientConnection::is_active_shell_client)
-                {
+                if self.handoff_in_progress {
                     return false;
                 }
+                // A shell viewing another machine still types into this server's regions;
+                // handle_region_input applies the region gate.
                 if self
                     .app
                     .state
@@ -2482,6 +2479,13 @@ impl HeadlessServer {
                     .is_some()
                 {
                     return self.handle_region_input(client_id, &terminal_id, events);
+                }
+                if !self
+                    .clients
+                    .get(&client_id)
+                    .is_some_and(ClientConnection::is_active_shell_client)
+                {
+                    return false;
                 }
                 let pixel_mouse = self.clients.get(&client_id).is_some_and(|client| {
                     client.pixel_mouse && client.host_sgr_pixels_active == Some(true)
@@ -2667,6 +2671,9 @@ impl HeadlessServer {
                 client_id,
                 viewport,
             } => self.handle_region_viewport(client_id, viewport),
+            ServerEvent::ClientShellRegionCommand { client_id, command } => {
+                self.handle_region_command(client_id, command)
+            }
             ServerEvent::ClientWriterDrained { client_id } => {
                 let Some(client) = self.clients.get_mut(&client_id) else {
                     return false;

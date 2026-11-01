@@ -407,3 +407,178 @@ async fn hidden_region_rejects_new_input() {
     assert!(input.try_recv().is_err());
     shutdown_test_runtimes(&mut server);
 }
+
+// A shell that views another machine stays a region viewer of this server.
+
+fn set_surface_active(server: &mut HeadlessServer, client_id: u64, active: bool) {
+    let boot_id = server.client_shell_boot_id.clone();
+    server.handle_server_event(ServerEvent::ClientShellEndpointRequest {
+        client_id,
+        boot_id,
+        request: Box::new(api::schema::Request {
+            id: format!("surface-{active}"),
+            method: api::schema::Method::ClientShellSurfaceSet(
+                api::schema::ClientShellSurfaceSetParams { active },
+            ),
+        }),
+    });
+}
+
+fn command(
+    server: &mut HeadlessServer,
+    client_id: u64,
+    command: region_surface::RegionCommand,
+) -> bool {
+    server.handle_server_event(ServerEvent::ClientShellRegionCommand { client_id, command })
+}
+
+#[tokio::test]
+async fn a_shell_viewing_another_machine_keeps_receiving_region_frames() {
+    let mut server = test_headless_server();
+    install_shared_view_test_runtime(&mut server);
+    let region_id = server.app.install_test_region(
+        "plugin.board",
+        crate::terminal::TerminalRuntime::test_with_screen_bytes(30, 10, b"REGION_LIVE"),
+    );
+    let (control, render) = connect_shell(&mut server, 7, true);
+    server.render_and_stream();
+    server.stream_region_surfaces();
+    assert_eq!(region_surfaces(&drain(&render)).len(), 1);
+    let _ = drain(&control);
+
+    // Switching away discards queued render work, so the region frame must be sent again.
+    set_surface_active(&mut server, 7, false);
+    assert!(!server.clients[&7].is_active_shell_client());
+    assert!(server.has_region_viewer());
+    let _ = drain(&control);
+    let _ = drain(&render);
+    server.stream_region_surfaces();
+    let surfaces = region_surfaces(&drain(&render));
+    assert_eq!(surfaces.len(), 1, "frame resent to the background shell");
+    assert_eq!(surfaces[0].region_id, region_id.as_str());
+    assert!(frame_text(&surfaces[0].frame).contains("REGION_LIVE"));
+
+    // Its viewport still sizes the region terminal.
+    viewport(&mut server, 7, region_id.as_str(), 42, 17);
+    assert_eq!(region_size(&server, &region_id), (17, 42));
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn a_shell_viewing_another_machine_can_type_into_a_region_but_not_a_popup() {
+    let mut server = test_headless_server();
+    install_shared_view_test_runtime(&mut server);
+    let (runtime, mut input) = crate::terminal::TerminalRuntime::test_with_channel(30, 10);
+    let region_id = server.app.install_test_region("plugin.board", runtime);
+    let terminal_id = region_terminal_id(&server, &region_id);
+    let (_control, _render) = connect_shell(&mut server, 7, true);
+    let (_c2, _r2) = connect_shell(&mut server, 8, false);
+    set_surface_active(&mut server, 7, false);
+    set_surface_active(&mut server, 8, false);
+
+    server.handle_server_event(ServerEvent::ClientShellPopupInput {
+        client_id: 7,
+        terminal_id: terminal_id.clone(),
+        events: text_commit("typed"),
+    });
+    assert_eq!(
+        input.try_recv().expect("region input"),
+        Bytes::from_static(b"typed")
+    );
+
+    // A background shell without regions still cannot reach the region terminal.
+    server.handle_server_event(ServerEvent::ClientShellPopupInput {
+        client_id: 8,
+        terminal_id,
+        events: text_commit("legacy"),
+    });
+    assert!(input.try_recv().is_err());
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn region_commands_toggle_and_resize_for_a_region_capable_shell_only() {
+    use region_surface::RegionCommand;
+    let mut server = test_headless_server();
+    install_shared_view_test_runtime(&mut server);
+    let region_id = server.app.install_test_region(
+        "plugin.board",
+        crate::terminal::TerminalRuntime::test_with_screen_bytes(30, 10, b"R"),
+    );
+    let id = region_id.as_str().to_string();
+    let (_c1, _r1) = connect_shell(&mut server, 7, true);
+    let (_c2, _r2) = connect_shell(&mut server, 8, false);
+    set_surface_active(&mut server, 7, false);
+    let region = |server: &HeadlessServer| {
+        let region = server.app.state.regions.get_by_id(&id).expect("region");
+        (region.visible, region.size)
+    };
+    let start = region(&server);
+
+    assert!(!command(
+        &mut server,
+        8,
+        RegionCommand::Hide {
+            region_id: id.clone()
+        }
+    ));
+    assert!(!command(
+        &mut server,
+        8,
+        RegionCommand::Resize {
+            region_id: id.clone(),
+            size: 44
+        }
+    ));
+    assert_eq!(
+        region(&server),
+        start,
+        "a shell without regions changes nothing"
+    );
+
+    assert!(command(
+        &mut server,
+        7,
+        RegionCommand::Resize {
+            region_id: id.clone(),
+            size: 44
+        }
+    ));
+    assert_eq!(region(&server), (true, 44));
+    assert!(command(
+        &mut server,
+        7,
+        RegionCommand::Hide {
+            region_id: id.clone()
+        }
+    ));
+    assert_eq!(region(&server), (false, 44));
+    assert!(command(
+        &mut server,
+        7,
+        RegionCommand::Show {
+            region_id: id.clone()
+        }
+    ));
+    assert_eq!(region(&server), (true, 44));
+
+    assert!(!command(
+        &mut server,
+        7,
+        RegionCommand::Show {
+            region_id: "region-not-here".into()
+        }
+    ));
+
+    server.handoff_in_progress = true;
+    assert!(!command(
+        &mut server,
+        7,
+        RegionCommand::Hide {
+            region_id: id.clone()
+        }
+    ));
+    assert_eq!(region(&server), (true, 44), "no change during a handoff");
+    server.handoff_in_progress = false;
+    shutdown_test_runtimes(&mut server);
+}

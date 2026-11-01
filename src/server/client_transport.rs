@@ -577,6 +577,11 @@ pub(crate) enum ServerEvent {
         client_id: u64,
         viewport: crate::protocol::region_surface::RegionViewport,
     },
+    /// A region-capable shell showed, hid or resized a region while viewing another machine.
+    ClientShellRegionCommand {
+        client_id: u64,
+        command: crate::protocol::region_surface::RegionCommand,
+    },
     /// A client-owned shell invoked one endpoint operation through this connection.
     ClientShellEndpointRequest {
         client_id: u64,
@@ -1415,6 +1420,15 @@ fn client_read_loop_with_endpoint_controls(
                     client_id,
                     viewport,
                 }
+            }
+            ClientMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::region_surface::COMMAND_KIND =>
+            {
+                let Some(command) = crate::protocol::region_surface::decode_command(&data) else {
+                    debug!(client_id, "ignoring malformed region command");
+                    continue;
+                };
+                ServerEvent::ClientShellRegionCommand { client_id, command }
             }
             ClientMessage::EndpointControl { kind, data } => {
                 let Some(response) = crate::server::client_endpoint_control::response(&kind, data)

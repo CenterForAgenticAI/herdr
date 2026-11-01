@@ -209,6 +209,8 @@ pub(super) enum ClientChromeDrag {
         edge: crate::region::RegionEdge,
         far_edge: u16,
         last_sent: Option<u16>,
+        /// The region is the local server's, drawn while another machine is viewed.
+        fallback: bool,
     },
     SidebarSection,
     WorkspaceScrollbar {
@@ -917,6 +919,9 @@ pub(crate) struct ClientShellState {
     pub(super) last_composed_size: Option<(u16, u16)>,
     pub(super) last_composed_at: Option<std::time::Instant>,
     pub(super) selection_repaint_deadline: Option<std::time::Instant>,
+    /// The local server's region that holds keyboard focus while another machine is viewed.
+    /// The local server cannot own this focus: it is not the surface the user is driving.
+    pub(super) fallback_region_focus: Option<String>,
     /// Region viewports measured by the last compose, waiting to be sent.
     pub(super) pending_region_viewports: Vec<(
         ClientEndpointId,
@@ -1096,6 +1101,7 @@ impl ClientShellState {
             last_composed_size: None,
             last_composed_at: None,
             selection_repaint_deadline: None,
+            fallback_region_focus: None,
             pending_region_viewports: Vec::new(),
             hits: ShellHitMap::default(),
             endpoints: vec![local_endpoint()],

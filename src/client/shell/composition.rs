@@ -186,10 +186,7 @@ impl ClientShellState {
             return None;
         }
         let layout = self.layout(cols, rows);
-        self.pending_region_viewports = super::regions::CLIENT_REGION_EDGES
-            .into_iter()
-            .filter_map(|edge| self.region_viewport(edge, layout.region(edge)))
-            .collect();
+        self.pending_region_viewports = self.region_viewports(&layout);
         if self.last_tab_bar_width != Some(layout.tab_bar.width) {
             self.last_tab_bar_width = Some(layout.tab_bar.width);
             self.reveal_focused_tab = true;
