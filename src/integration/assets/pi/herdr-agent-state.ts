@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=9
+// HERDR_INTEGRATION_VERSION=10
 // @ts-nocheck
 
 import net from "node:net";
@@ -183,6 +183,9 @@ export default function (pi) {
 
   let agentActive = false;
   let blockedCount = 0;
+  // Raises of herdr:busy from other extensions: work this session still runs,
+  // such as background subagents, after its own turn has settled.
+  let busyCount = 0;
   let blockedMessage: string | undefined;
   let lastState: AgentState | undefined;
   let lastMessage: string | undefined;
@@ -192,7 +195,7 @@ export default function (pi) {
     if (blockedCount > 0) {
       return { state: "blocked" as const, message: blockedMessage };
     }
-    if (agentActive) {
+    if (agentActive || busyCount > 0) {
       return { state: "working" as const, message: undefined };
     }
     return { state: "idle" as const, message: undefined };
@@ -223,6 +226,14 @@ export default function (pi) {
 
     blockedCount += 1;
     blockedMessage = data.label;
+    publishState();
+  });
+
+  pi.events.on("herdr:busy", (data) => {
+    if (!rootSession) {
+      return;
+    }
+    busyCount = data?.active ? busyCount + 1 : Math.max(0, busyCount - 1);
     publishState();
   });
 
