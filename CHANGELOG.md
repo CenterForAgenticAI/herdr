@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- Pi panes stay working while another extension reports background work with the `herdr:busy` event, such as subagents that keep running after the turn ends. Before, the pane showed idle or done until the next turn. Run `herdr integration install pi` to update.
+
 ## [0.9.5] - 2026-10-14
 
 This is a hotfix release for v0.9.4. See the v0.9.4 notes for the full feature release: https://github.com/herdrdev/herdr/releases/tag/v0.9.4

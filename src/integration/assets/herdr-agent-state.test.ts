@@ -370,6 +370,62 @@ test("Pi settlement preserves explicit blocked-state precedence", async () => {
   expect(requestStates(requests)).toEqual(["idle", "working", "blocked", "idle"]);
 });
 
+test("Pi stays working while another extension reports background work", async () => {
+  const requests = await startRecordingServer("pi-busy");
+  const { eventHandlers, handlers, pi } = createExtensionHarness();
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  let idle = true;
+  const context = piContext(() => idle);
+  await handlers.get("session_start")?.({ reason: "startup" }, context);
+  await waitFor(() => requestStates(requests).length === 1);
+  idle = false;
+  handlers.get("agent_start")?.({}, context);
+  await waitFor(() => requestStates(requests).length === 2);
+
+  // Two extensions each raise busy while the turn runs.
+  eventHandlers.get("herdr:busy")?.({ active: true, label: "subagents" }, context);
+  eventHandlers.get("herdr:busy")?.({ active: true, label: "build" }, context);
+
+  // The turn settles, but background work continues: the pane must not go idle.
+  idle = true;
+  handlers.get("agent_settled")?.({}, context);
+  await Bun.sleep(25);
+  expect(requestStates(requests)).toEqual(["idle", "working"]);
+
+  // One release leaves the other raise in force.
+  eventHandlers.get("herdr:busy")?.({ active: false }, context);
+  await Bun.sleep(25);
+  expect(requestStates(requests)).toEqual(["idle", "working"]);
+
+  // The last release reports idle.
+  eventHandlers.get("herdr:busy")?.({ active: false }, context);
+  await waitFor(() => requestStates(requests).length === 3);
+  expect(requestStates(requests)).toEqual(["idle", "working", "idle"]);
+});
+
+test("Pi reports working when background work starts after the turn settles", async () => {
+  const requests = await startRecordingServer("pi-busy-idle");
+  const { eventHandlers, handlers, pi } = createExtensionHarness();
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  const context = piContext(() => true);
+  await handlers.get("session_start")?.({ reason: "startup" }, context);
+  await waitFor(() => requestStates(requests).length === 1);
+
+  eventHandlers.get("herdr:busy")?.({ active: true, label: "subagents" }, context);
+  await waitFor(() => requestStates(requests).length === 2);
+  // An unmatched release cannot drive the count below zero and hide a later raise.
+  eventHandlers.get("herdr:busy")?.({ active: false }, context);
+  eventHandlers.get("herdr:busy")?.({ active: false }, context);
+  await waitFor(() => requestStates(requests).length === 3);
+  eventHandlers.get("herdr:busy")?.({ active: true, label: "subagents" }, context);
+  await waitFor(() => requestStates(requests).length === 4);
+  expect(requestStates(requests)).toEqual(["idle", "working", "idle", "working"]);
+});
+
 test("Pi reports the session replacement source", async () => {
   const requests = await startRecordingServer("pi-session-source");
   const { handlers, pi } = createExtensionHarness();
